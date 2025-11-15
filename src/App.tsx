@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 import type { Session } from "@supabase/supabase-js";
 
@@ -311,7 +311,7 @@ const StatCard: React.FC<{
 };
 
 // =========================
-// Tela de Login (Plenum)
+// Tela de Login (SegVenc)
 // =========================
 
 const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
@@ -322,36 +322,110 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
 
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setError(null);
-  setLoading(true);
+  // garante que exista empresa + linha em public.usuarios para esse usuário
+  const ensureEmpresaAndUsuario = async (session: Session) => {
+    // 1) verifica se já existe registro em public.usuarios
+    const { data: usuario, error: usuarioError } = await supabase
+      .from("usuarios")
+      .select("empresa_id")
+      .eq("auth_user_id", session.user.id)
+      .maybeSingle();
 
-  try {
-    if (isLogin) {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (error) throw error;
-      onAuth(data.session);
-    } else {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-      if (error) throw error;
-      onAuth(data.session);
+    if (usuarioError) {
+      console.error("Erro ao buscar usuario em public.usuarios:", usuarioError);
+      throw new Error("Erro ao verificar vínculo do usuário com empresa.");
     }
-  } catch (err: any) {
-    console.error(err);
-    setError(err.message || "Erro ao autenticar. Verifique os dados.");
-  } finally {
-    setLoading(false);
-  }
-};
 
+    // se já existe empresa vinculada, não faz nada
+    if (usuario && usuario.empresa_id) {
+      return;
+    }
+
+    // 2) cria empresa padrão
+    const nomeEmpresaPadrao = "Empresa de " + (session.user.email ?? "usuário");
+
+    const { data: novaEmpresa, error: empresaError } = await supabase
+      .from("empresas")
+      .insert({
+        nome: nomeEmpresaPadrao,
+      })
+      .select("id")
+      .single();
+
+    if (empresaError || !novaEmpresa) {
+      console.error("Erro ao criar empresa:", empresaError);
+      throw new Error("Erro ao criar empresa para o usuário.");
+    }
+
+    // 3) cria vínculo em public.usuarios (admin)
+    const { error: usuarioInsertError } = await supabase
+      .from("usuarios")
+      .insert({
+        auth_user_id: session.user.id,
+        empresa_id: novaEmpresa.id,
+        nome: session.user.email,
+        role: "admin",
+      });
+
+    if (usuarioInsertError) {
+      console.error("Erro ao criar registro em usuarios:", usuarioInsertError);
+      throw new Error("Erro ao vincular usuário à empresa.");
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setInfo(null);
+    setLoading(true);
+
+    try {
+      if (isLogin) {
+        // ------ LOGIN ------
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (error) throw error;
+        if (!data.session) {
+          throw new Error("Sessão não retornada no login.");
+        }
+
+        // garante empresa + usuario
+        await ensureEmpresaAndUsuario(data.session);
+
+        onAuth(data.session);
+      } else {
+        // ------ CADASTRO (apenas cria usuário no auth) ------
+        const { data, error } = await supabase.auth.signUp({
+  email,
+  password,
+  options: {
+    emailRedirectTo: `${window.location.origin}/`,
+  },
+});
+
+        if (error) throw error;
+
+        // Aqui não criamos empresa ainda por causa do e-mail de confirmação.
+        // A empresa será criada no primeiro login após confirmação.
+        setInfo(
+          "Cadastro realizado. Enviamos um e-mail de confirmação. Após confirmar, volte e faça login."
+        );
+        setIsLogin(true);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError(
+        err.message ||
+          "Erro ao autenticar. Verifique os dados ou tente novamente."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4">
@@ -360,8 +434,8 @@ const handleSubmit = async (e: React.FormEvent) => {
         <div className="flex flex-col items-center gap-3">
           <div className="w-16 h-16 rounded-2xl bg-sky-900 flex items-center justify-center shadow-lg overflow-hidden">
             <img
-              src="/plenum-logo.png"
-              alt="Plenum"
+              src="/plenum_icon_192x192.png"  // ícone mantém o mesmo arquivo
+              alt="SegVenc"
               className="w-14 h-14 object-contain"
               onError={(e) => {
                 (e.target as HTMLImageElement).style.display = "none";
@@ -370,7 +444,7 @@ const handleSubmit = async (e: React.FormEvent) => {
           </div>
           <div className="text-center space-y-1">
             <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-              Plenum
+              SegVenc
             </h1>
             <p className="text-[13px] text-slate-500 font-medium">
               Seu Sistema de Gestão de Vencimentos
@@ -382,6 +456,12 @@ const handleSubmit = async (e: React.FormEvent) => {
           {error && (
             <div className="rounded-xl bg-rose-50 text-rose-700 text-xs p-3 border border-rose-200">
               {error}
+            </div>
+          )}
+
+          {info && (
+            <div className="rounded-xl bg-emerald-50 text-emerald-700 text-xs p-3 border border-emerald-200">
+              {info}
             </div>
           )}
 
@@ -427,7 +507,7 @@ const handleSubmit = async (e: React.FormEvent) => {
             {loading
               ? "Aguarde..."
               : isLogin
-              ? "Entrar no Plenum"
+              ? "Entrar no SegVenc"
               : "Criar conta"}
           </button>
         </form>
@@ -439,7 +519,11 @@ const handleSubmit = async (e: React.FormEvent) => {
               <button
                 type="button"
                 className="text-sky-600 font-semibold hover:underline"
-                onClick={() => setIsLogin(false)}
+                onClick={() => {
+                  setError(null);
+                  setInfo(null);
+                  setIsLogin(false);
+                }}
               >
                 Criar conta
               </button>
@@ -450,7 +534,11 @@ const handleSubmit = async (e: React.FormEvent) => {
               <button
                 type="button"
                 className="text-sky-600 font-semibold hover:underline"
-                onClick={() => setIsLogin(true)}
+                onClick={() => {
+                  setError(null);
+                  setInfo(null);
+                  setIsLogin(true);
+                }}
               >
                 Fazer login
               </button>
@@ -1325,6 +1413,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
     </div>
   );
 };
+
 // =========================
 // TELA COLABORADORES
 // =========================
@@ -1338,7 +1427,6 @@ type ColaboradoresViewProps = {
 const ColaboradoresView: React.FC<ColaboradoresViewProps> = ({
   colaboradores,
   setColaboradores,
-  customFilters,
 }) => {
   const [extraCols, setExtraCols] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1931,25 +2019,33 @@ const App: React.FC = () => {
   // 👤 sessão / empresa / loading inicial
   const [session, setSession] = useState<Session | null>(null);
   const [empresaId, setEmpresaId] = useState<string | null>(null);
-  const [loadingInitialData, setLoadingInitialData] = useState<boolean>(false);
+  const [loadingInitialData, setLoadingInitialData] =
+    useState<boolean>(false);
 
   // 📊 estados principais
   const [currentTab, setCurrentTab] = useState<TabKey>("dashboard");
+  const [menuOpen, setMenuOpen] = useState(false);
+
   const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
   const [registros, setRegistros] = useState<Registro[]>([]);
   const [exames, setExames] = useState<ExameCurso[]>([]);
   const [customFilters, setCustomFilters] = useState<CustomFilter[]>([]);
-  const [filtrosDashboard, setFiltrosDashboard] = useState<{
-    setor: string;
-    funcao: string;
-    tipo: string;
-    custom: Record<string, string>;
-  }>({
+  const [filtrosDashboard, setFiltrosDashboard] = useState({
     setor: "",
     funcao: "",
     tipo: "",
-    custom: {},
+    custom: {} as Record<string, string>,
   });
+
+  // =========================
+  // Logout
+  // =========================
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setSession(null);
+    setEmpresaId(null);
+    setMenuOpen(false);
+  };
 
   // =====================
   // Auth listener
@@ -2059,16 +2155,6 @@ const App: React.FC = () => {
     loadAllData();
   }, [session]);
 
-  // =====================
-  // UI de alto nível
-  // =====================
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setSession(null);
-    setEmpresaId(null);
-  };
-
   if (!session) {
     return <AuthScreen onAuth={setSession} />;
   }
@@ -2084,53 +2170,79 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100">
-      {/* Cabeçalho */}
-      <header className="border-b border-slate-200 bg-white/80 backdrop-blur">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-2xl bg-sky-900 flex items-center justify-center shadow-md overflow-hidden">
-              <img
-                src="/plenum-logo.png"
-                alt="Plenum"
-                className="w-8 h-8 object-contain"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
-              />
-            </div>
-            <div>
-              <div className="text-sm font-extrabold text-slate-900">
-                Plenum
-              </div>
-              <div className="text-[11px] text-slate-500">
-                Seu Sistema de Gestão de Vencimentos
-              </div>
-            </div>
+    <div className="min-h-screen flex flex-col bg-slate-50">
+      {/* HEADER */}
+      <header className="flex items-center justify-between border-b border-slate-200 bg-white/80 backdrop-blur px-6 py-3 relative">
+        {/* LOGO */}
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-2xl bg-sky-900 flex items-center justify-center shadow-md overflow-hidden">
+            <img
+              src="/plenum_icon_192x192.png"
+              alt="Logo"
+              className="w-8 h-8 object-contain"
+            />
           </div>
+          <div className="flex flex-col leading-tight">
+            <span className="text-sm font-semibold text-slate-900">
+              SegVenc
+            </span>
+            <span className="text-[11px] text-slate-500">
+              Gestão de Vencimentos
+            </span>
+          </div>
+        </div>
 
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <div className="text-[11px] text-slate-500">
-                Usuário autenticado
-              </div>
-              <div className="text-xs font-semibold text-slate-800 truncate max-w-[200px]">
-                {session.user.email}
-              </div>
+        {/* USUÁRIO */}
+        <div className="relative">
+          <button
+            onClick={() => setMenuOpen(!menuOpen)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl hover:bg-slate-100 transition"
+          >
+            <div className="w-8 h-8 rounded-full bg-sky-600 text-white flex items-center justify-center font-semibold">
+              {session?.user?.email?.[0]?.toUpperCase() || "U"}
             </div>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="rounded-full border border-slate-300 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
-            >
-              Sair
-            </button>
-          </div>
+
+            <div className="text-left leading-tight hidden sm:block">
+              <span className="text-xs font-semibold text-slate-800 block">
+                {session?.user?.user_metadata?.full_name || "Usuário"}
+              </span>
+              <span className="text-[11px] text-slate-500 block">
+                {session?.user?.email}
+              </span>
+            </div>
+          </button>
+
+          {menuOpen && (
+            <div className="absolute right-0 mt-2 w-44 bg-white shadow-xl rounded-xl border border-slate-200 py-2 text-sm z-50">
+              <button
+                className="w-full text-left px-4 py-2 hover:bg-slate-100"
+                onClick={() => alert("Perfil em desenvolvimento")}
+              >
+                Perfil
+              </button>
+
+              <button
+                className="w-full text-left px-4 py-2 hover:bg-slate-100"
+                onClick={() =>
+                  alert("Função de alterar senha em desenvolvimento")
+                }
+              >
+                Alterar senha
+              </button>
+
+              <button
+                className="w-full text-left px-4 py-2 text-rose-600 hover:bg-rose-50"
+                onClick={handleSignOut}
+              >
+                Sair
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
-      {/* Conteúdo principal */}
-      <main className="max-w-6xl mx-auto px-4 py-4">
+      {/* CONTEÚDO PRINCIPAL */}
+      <main className="max-w-6xl mx-auto px-4 py-4 w-full flex-1">
         {/* Abas */}
         <div className="flex gap-2 mb-4">
           {(

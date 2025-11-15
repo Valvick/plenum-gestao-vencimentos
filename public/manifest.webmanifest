@@ -1,0 +1,18 @@
+{
+  "name": "SegVenc - Gestão de Vencimentos",
+  "short_name": "SegVenc",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#0f172a",
+  "icons": [
+    { "src": "/plenum_icon_72x72.png", "sizes": "72x72", "type": "image/png" },
+    { "src": "/plenum_icon_96x96.png", "sizes": "96x96", "type": "image/png" },
+    { "src": "/plenum_icon_128x128.png", "sizes": "128x128", "type": "image/png" },
+    { "src": "/plenum_icon_144x144.png", "sizes": "144x144", "type": "image/png" },
+    { "src": "/plenum_icon_152x152.png", "sizes": "152x152", "type": "image/png" },
+    { "src": "/plenum_icon_192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/plenum_icon_384x384.png", "sizes": "384x384", "type": "image/png" },
+    { "src": "/plenum_icon_512x512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

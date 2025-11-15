@@ -1,17 +1,26 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+
+    <!-- Ícone do Plenum (favicon) -->
+    <link rel="icon" type="image/png" href="/plenum_icon_192x192.png" />
+
+    <!-- Suporte ao PWA -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/plenum_icon_192x192.png" />
+    <meta name="theme-color" content="#0f172a" />
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>gestao-vencimentos</title>
+
+    <title>SegVenc - Gestão de Vencimentos</title>
 
     <!-- ESSENCIAL PARA TAILWIND FUNCIONAR -->
     <link rel="stylesheet" href="/src/index.css" />
   </head>
-  <body>
+
+  <body class="bg-slate-50">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
