@@ -2877,112 +2877,167 @@ const App: React.FC = () => {
     };
   }, []);
 
-    // =====================
-  // Carregar dados do Supabase
   // =====================
-  useEffect(() => {
-    const loadAllData = async () => {
-      if (!session) return;
+// Carregar dados do Supabase
+// =====================
 
-      setLoadingInitialData(true);
+useEffect(() => {
+  const loadAllData = async () => {
+    if (!session) return;
 
-      try {
-        // 1) pegar empresa_id e role do usuário logado
-        const { data: usuario, error: userError } = await supabase
-          .from("usuarios")
-          .select("empresa_id, role")
-          .eq("auth_user_id", session.user.id)
-          .maybeSingle();
+    setLoadingInitialData(true);
 
-        if (userError) {
-          console.error("Erro ao buscar usuario/empresa:", userError);
-          return;
-        }
+    try {
+      // 1) pegar usuario / empresa
+      const { data: usuario, error: userError } = await supabase
+        .from("usuarios")
+        .select("id, empresa_id, role, nome")
+        .eq("auth_user_id", session.user.id)
+        .maybeSingle();
 
-        // Aqui, em teoria, o ensureEmpresaAndUsuario JÁ garantiu empresa_id.
-        if (!usuario || !usuario.empresa_id) {
-          console.error(
-            "Usuário logado ainda está sem empresa_id após login. Verifique ensureEmpresaAndUsuario."
-          );
-          setEmpresaId(null);
-          return;
-        }
+      let empId: string | null = null;
+      let role: "admin" | "user" = "user";
 
-        const empId = String(usuario.empresa_id);
-
-        setEmpresaId(empId);
-        setIsAdmin(usuario.role === "admin");
-
-        // 2) colaboradores
-        const { data: colabs, error: colabError } = await supabase
-          .from("colaboradores")
-          .select("*")
-          .eq("empresa_id", empId)
-          .order("nome", { ascending: true });
-
-        if (colabError) {
-          console.error("Erro ao carregar colaboradores:", colabError);
-        } else if (colabs) {
-          setColaboradores(colabs.map(mapColaboradorFromDb));
-        }
-
-        // 3) exames/cursos
-        const { data: exams, error: examError } = await supabase
-          .from("exames_cursos")
-          .select("*")
-          .eq("empresa_id", empId)
-          .order("nome", { ascending: true });
-
-        if (examError) {
-          console.error("Erro ao carregar exames/cursos:", examError);
-        } else if (exams) {
-          setExames(exams.map(mapExameFromDb));
-        }
-
-        // 4) registros
-        const { data: regs, error: regsError } = await supabase
-          .from("registros")
-          .select("*")
-          .eq("empresa_id", empId);
-
-        if (regsError) {
-          console.error("Erro ao carregar registros:", regsError);
-        } else if (regs) {
-          setRegistros(regs.map(mapRegistroFromDb));
-        }
-
-        // 5) custom_filters
-        const { data: filters, error: filtError } = await supabase
-          .from("custom_filters")
-          .select("*")
-          .eq("empresa_id", empId);
-
-        if (filtError) {
-          console.error("Erro ao carregar custom_filters:", filtError);
-        } else if (filters) {
-          setCustomFilters(filters.map(mapCustomFilterFromDb));
-        }
-
-        // 6) usuarios da empresa
-        const { data: usersData, error: usersError } = await supabase
-          .from("usuarios")
-          .select("id, auth_user_id, empresa_id, nome, role")
-          .eq("empresa_id", empId);
-
-        if (usersError) {
-          console.error("Erro ao carregar usuarios:", usersError);
-        } else if (usersData) {
-          setUsuariosInternos(usersData.map(mapUsuarioFromDb));
-        }
-      } catch (err) {
-        console.error("Erro inesperado ao carregar dados:", err);
-      } finally {
+      if (userError) {
+        console.error("Erro ao buscar usuario/empresa:", userError);
         setLoadingInitialData(false);
+        return;
       }
-    };
 
-    loadAllData();
-  }, [session]);
+      // 🔹 Se NÃO existir usuário ou NÃO tiver empresa_id -> cria empresa + vínculo
+      if (!usuario || !usuario.empresa_id) {
+        console.warn(
+          "Usuário logado sem empresa vinculada. Criando empresa padrão..."
+        );
+
+        const nomeEmpresaPadrao =
+          "Empresa de " + (session.user.email ?? "usuário");
+
+        // 1.1 cria empresa
+        const { data: novaEmpresa, error: empresaError } = await supabase
+          .from("empresas")
+          .insert({ nome: nomeEmpresaPadrao })
+          .select("id")
+          .single();
+
+        if (empresaError || !novaEmpresa) {
+          console.error("Erro ao criar empresa padrão:", empresaError);
+          setLoadingInitialData(false);
+          return;
+        }
+
+        empId = novaEmpresa.id as string;
+
+        // 1.2 cria ou atualiza usuário
+        const { error: upsertUsuarioError } = await supabase
+          .from("usuarios")
+          .upsert(
+            {
+              auth_user_id: session.user.id,
+              empresa_id: empId,
+              nome: session.user.email,
+              role: "admin", // primeiro usuário vira admin
+            },
+            { onConflict: "auth_user_id" }
+          );
+
+        if (upsertUsuarioError) {
+          console.error(
+            "Erro ao criar/atualizar usuário com empresa:",
+            upsertUsuarioError
+          );
+          setLoadingInitialData(false);
+          return;
+        }
+
+        role = "admin";
+      } else {
+        // 🔹 Usuário já existe e tem empresa_id
+        empId = usuario.empresa_id as string;
+        role = usuario.role as "admin" | "user";
+      }
+
+      if (!empId) {
+        console.error("Não foi possível determinar empresa_id.");
+        setLoadingInitialData(false);
+        return;
+      }
+
+      // guarda em estado
+      setEmpresaId(empId);
+      setIsAdmin(role === "admin");
+
+      // 2) colaboradores
+      const { data: colabs, error: colabError } = await supabase
+        .from("colaboradores")
+        .select("*")
+        .eq("empresa_id", empId)
+        .order("nome", { ascending: true });
+
+      if (colabError) {
+        console.error("Erro ao carregar colaboradores:", colabError);
+      } else if (colabs) {
+        setColaboradores(colabs.map(mapColaboradorFromDb));
+      }
+
+      // 3) exames/cursos
+      const { data: exams, error: examError } = await supabase
+        .from("exames_cursos")
+        .select("*")
+        .eq("empresa_id", empId)
+        .order("nome", { ascending: true });
+
+      if (examError) {
+        console.error("Erro ao carregar exames/cursos:", examError);
+      } else if (exams) {
+        setExames(exams.map(mapExameFromDb));
+      }
+
+      // 4) registros
+      const { data: regs, error: regsError } = await supabase
+        .from("registros")
+        .select("*")
+        .eq("empresa_id", empId);
+
+      if (regsError) {
+        console.error("Erro ao carregar registros:", regsError);
+      } else if (regs) {
+        setRegistros(regs.map(mapRegistroFromDb));
+      }
+
+      // 5) custom_filters
+      const { data: filters, error: filtError } = await supabase
+        .from("custom_filters")
+        .select("*")
+        .eq("empresa_id", empId);
+
+      if (filtError) {
+        console.error("Erro ao carregar custom_filters:", filtError);
+      } else if (filters) {
+        setCustomFilters(filters.map(mapCustomFilterFromDb));
+      }
+
+      // 6) usuarios da empresa
+      const { data: usersData, error: usersError } = await supabase
+        .from("usuarios")
+        .select("id, auth_user_id, empresa_id, nome, role")
+        .eq("empresa_id", empId);
+
+      if (usersError) {
+        console.error("Erro ao carregar usuarios:", usersError);
+      } else if (usersData) {
+        setUsuariosInternos(usersData.map(mapUsuarioFromDb));
+      }
+    } catch (err) {
+      console.error("Erro inesperado ao carregar dados:", err);
+    } finally {
+      setLoadingInitialData(false);
+    }
+  };
+
+  loadAllData();
+}, [session]);
+
 
 
   const handleChangeUserRole = async (
