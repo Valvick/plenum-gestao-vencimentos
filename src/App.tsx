@@ -315,53 +315,84 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  // garante que exista empresa + linha em public.usuarios para esse usuário
+  // ============================================================
+  // GARANTE QUE EXISTA EMPRESA + USUÁRIO VINCULADO
+  // ============================================================
   const ensureEmpresaAndUsuario = async (session: Session) => {
+    const authId = session.user.id;
+    const email = session.user.email ?? "";
+
+    // 1) Verificar se já existe usuário
     const { data: usuario, error: usuarioError } = await supabase
       .from("usuarios")
-      .select("empresa_id")
-      .eq("auth_user_id", session.user.id)
+      .select("*")
+      .eq("auth_user_id", authId)
       .maybeSingle();
 
     if (usuarioError) {
-      console.error("Erro ao buscar usuario em public.usuarios:", usuarioError);
-      throw new Error("Erro ao verificar vínculo do usuário com empresa.");
+      console.error("Erro ao buscar usuário:", usuarioError);
+      return;
     }
 
+    // ============================================================
+    // CENÁRIO 1 — Usuário já existe E TEM empresa → OK
+    // ============================================================
     if (usuario && usuario.empresa_id) {
       return;
     }
 
-    const nomeEmpresaPadrao = "Empresa de " + (session.user.email ?? "usuário");
+    // ============================================================
+    // CENÁRIO 2 — Usuário existe mas NÃO tem empresa → criar empresa
+    // ============================================================
+    if (usuario && !usuario.empresa_id) {
+      const { data: empresa, error: empErr } = await supabase
+        .from("empresas")
+        .insert({ nome: "Empresa de " + email })
+        .select()
+        .maybeSingle();
 
-    const { data: novaEmpresa, error: empresaError } = await supabase
-      .from("empresas")
-      .insert({
-        nome: nomeEmpresaPadrao,
-      })
-      .select("id")
-      .single();
+      if (!empresa || empErr) {
+        console.error("Erro ao criar empresa:", empErr);
+        return;
+      }
 
-    if (empresaError || !novaEmpresa) {
-      console.error("Erro ao criar empresa:", empresaError);
-      throw new Error("Erro ao criar empresa para o usuário.");
+      await supabase
+        .from("usuarios")
+        .update({ empresa_id: empresa.id })
+        .eq("id", usuario.id);
+
+      return;
     }
 
-    const { error: usuarioInsertError } = await supabase
-      .from("usuarios")
-      .insert({
-        auth_user_id: session.user.id,
-        empresa_id: novaEmpresa.id,
-        nome: session.user.email,
-        role: "admin",
+    // ============================================================
+    // CENÁRIO 3 — Usuário NÃO existe → criar empresa + usuário
+    // ============================================================
+    if (!usuario) {
+      const { data: empresa, error: empresaErr } = await supabase
+        .from("empresas")
+        .insert({ nome: "Empresa de " + email })
+        .select()
+        .maybeSingle();
+
+      if (!empresa || empresaErr) {
+        console.error("Erro ao criar empresa:", empresaErr);
+        return;
+      }
+
+      await supabase.from("usuarios").insert({
+        auth_user_id: authId,
+        empresa_id: empresa.id,
+        nome: email,
+        role: "admin", // primeiro usuário vira admin
       });
 
-    if (usuarioInsertError) {
-      console.error("Erro ao criar registro em usuarios:", usuarioInsertError);
-      throw new Error("Erro ao vincular usuário à empresa.");
+      return;
     }
   };
 
+  // ============================================================
+  // SUBMIT (LOGIN / SIGNUP)
+  // ============================================================
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -369,46 +400,55 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
     setLoading(true);
 
     try {
+      // ============================================================
+      // LOGIN
+      // ============================================================
       if (isLogin) {
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
+
         if (error) throw error;
-        if (!data.session) {
-          throw new Error("Sessão não retornada no login.");
-        }
+        if (!data.session) throw new Error("Sessão não retornada.");
 
         await ensureEmpresaAndUsuario(data.session);
 
         onAuth(data.session);
-      } else {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo: `${window.location.origin}/`,
-          },
-        });
-
-        if (error) throw error;
-
-        setInfo(
-          "Cadastro realizado. Enviamos um e-mail de confirmação. Após confirmar, volte e faça login."
-        );
-        setIsLogin(true);
+        return;
       }
+
+      // ============================================================
+      // SIGNUP
+      // ============================================================
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/`,
+        },
+      });
+
+      if (error) throw error;
+
+      setInfo(
+        "Cadastro realizado! Enviamos um e-mail de confirmação. Após confirmar, volte e faça login."
+      );
+
+      // Não tenta autenticar nem vincular nada aqui
+      // O vínculo é feito automaticamente APÓS o login
+      setIsLogin(true);
     } catch (err: any) {
       console.error(err);
-      setError(
-        err.message ||
-          "Erro ao autenticar. Verifique os dados ou tente novamente."
-      );
+      setError(err.message || "Erro ao autenticar.");
     } finally {
       setLoading(false);
     }
   };
 
+  // ============================================================
+  // UI
+  // ============================================================
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4">
       <div className="w-full max-w-md bg-white/95 backdrop-blur rounded-[32px] shadow-2xl p-8 space-y-6 border border-slate-200">
@@ -418,9 +458,6 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
               src="/plenum_icon_192x192.png"
               alt="SegVenc"
               className="w-14 h-14 object-contain"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = "none";
-              }}
             />
           </div>
           <div className="text-center space-y-1">
@@ -447,35 +484,30 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
           )}
 
           <div className="space-y-1 text-sm">
-            <label className="font-semibold text-slate-700 text-xs" htmlFor="email">
+            <label className="font-semibold text-slate-700 text-xs">
               E-mail corporativo
             </label>
             <input
-              id="email"
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 bg-slate-50"
+              className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 bg-slate-50"
               placeholder="voce@empresa.com.br"
             />
           </div>
 
           <div className="space-y-1 text-sm">
-            <label
-              className="font-semibold text-slate-700 text-xs"
-              htmlFor="password"
-            >
+            <label className="font-semibold text-slate-700 text-xs">
               Senha
             </label>
             <input
-              id="password"
               type="password"
               required
               minLength={6}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 bg-slate-50"
+              className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 bg-slate-50"
               placeholder="Sua senha"
             />
           </div>
@@ -499,12 +531,12 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
               Ainda não tem acesso?{" "}
               <button
                 type="button"
-                className="text-sky-600 font-semibold hover:underline"
                 onClick={() => {
                   setError(null);
                   setInfo(null);
                   setIsLogin(false);
                 }}
+                className="text-sky-600 font-semibold hover:underline"
               >
                 Criar conta
               </button>
@@ -514,12 +546,12 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
               Já possui conta?{" "}
               <button
                 type="button"
-                className="text-sky-600 font-semibold hover:underline"
                 onClick={() => {
                   setError(null);
                   setInfo(null);
                   setIsLogin(true);
                 }}
+                className="text-sky-600 font-semibold hover:underline"
               >
                 Fazer login
               </button>
@@ -1527,18 +1559,24 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
                     />
                   </td>
                   <td className="px-3 py-1.5">
-                    <input
-                      className="w-full border border-slate-200 bg-transparent rounded-lg px-2 py-1"
-                      value={reg.cursoExame}
-                      onChange={(e) =>
-                        atualizarRegistro(
-                          reg.id,
-                          "cursoExame",
-                          e.target.value
-                        )
-                      }
-                    />
-                  </td>
+  <select
+    className="w-full border border-slate-200 bg-transparent rounded-lg px-2 py-1 text-xs"
+    value={reg.cursoExame}
+    onChange={(e) =>
+      atualizarRegistro(reg.id, "cursoExame", e.target.value)
+    }
+  >
+    <option value="">Selecione</option>
+    {exames
+      .filter((ex) => ex.tipo === reg.tipo) // só mostra exames/cursos do tipo escolhido
+      .map((ex) => (
+        <option key={ex.id} value={ex.nome}>
+          {ex.nome}
+        </option>
+      ))}
+  </select>
+</td>
+
                   <td className="px-3 py-1.5">
                     <select
                       className="w-full border border-slate-200 bg-transparent rounded-lg px-2 py-1 text-xs"
@@ -2839,10 +2877,9 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // =====================
+    // =====================
   // Carregar dados do Supabase
   // =====================
-
   useEffect(() => {
     const loadAllData = async () => {
       if (!session) return;
@@ -2859,21 +2896,20 @@ const App: React.FC = () => {
 
         if (userError) {
           console.error("Erro ao buscar usuario/empresa:", userError);
-          setLoadingInitialData(false);
           return;
         }
 
+        // Aqui, em teoria, o ensureEmpresaAndUsuario JÁ garantiu empresa_id.
         if (!usuario || !usuario.empresa_id) {
           console.error(
-            "Usuário logado não tem empresa_id vinculado na tabela 'usuarios'."
+            "Usuário logado ainda está sem empresa_id após login. Verifique ensureEmpresaAndUsuario."
           );
-          setLoadingInitialData(false);
+          setEmpresaId(null);
           return;
         }
 
-        const empId = usuario.empresa_id as string;
+        const empId = String(usuario.empresa_id);
 
-        // 🔹 garante que o estado de empresa e role sejam preenchidos
         setEmpresaId(empId);
         setIsAdmin(usuario.role === "admin");
 
@@ -2947,6 +2983,7 @@ const App: React.FC = () => {
 
     loadAllData();
   }, [session]);
+
 
   const handleChangeUserRole = async (
     id: number,
