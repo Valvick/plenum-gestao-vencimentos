@@ -2880,32 +2880,25 @@ useEffect(() => {
     setLoadingInitialData(true);
 
     try {
-      // 1) pegar usuario / empresa
+      // 1) Buscar usuário na tabela 'usuarios'
       const { data: usuario, error: userError } = await supabase
         .from("usuarios")
-        .select("id, empresa_id, role, nome")
+        .select("id, empresa_id, role")
         .eq("auth_user_id", session.user.id)
         .maybeSingle();
 
       let empId: string | null = null;
-      let role: "admin" | "user" = "user";
+      let role: "admin" | "user" = "admin";
 
       if (userError) {
         console.error("Erro ao buscar usuario/empresa:", userError);
-        setLoadingInitialData(false);
-        return;
       }
 
-      // 🔹 Se NÃO existir usuário ou NÃO tiver empresa_id -> cria empresa + vínculo
       if (!usuario || !usuario.empresa_id) {
-        console.warn(
-          "Usuário logado sem empresa vinculada. Criando empresa padrão..."
-        );
-
+        // 🔹 Não existe vínculo ainda → cria empresa + linha em 'usuarios'
         const nomeEmpresaPadrao =
           "Empresa de " + (session.user.email ?? "usuário");
 
-        // 1.1 cria empresa
         const { data: novaEmpresa, error: empresaError } = await supabase
           .from("empresas")
           .insert({ nome: nomeEmpresaPadrao })
@@ -2913,49 +2906,41 @@ useEffect(() => {
           .single();
 
         if (empresaError || !novaEmpresa) {
-          console.error("Erro ao criar empresa padrão:", empresaError);
+          console.error("Erro ao criar empresa:", empresaError);
           setLoadingInitialData(false);
           return;
         }
 
-        empId = novaEmpresa.id as string;
+        empId = String(novaEmpresa.id);
 
-        // 1.2 cria ou atualiza usuário
-        const { error: upsertUsuarioError } = await supabase
+        const { data: novoUsuario, error: usuarioInsertError } = await supabase
           .from("usuarios")
-          .upsert(
-            {
-              auth_user_id: session.user.id,
-              empresa_id: empId,
-              nome: session.user.email,
-              role: "admin", // primeiro usuário vira admin
-            },
-            { onConflict: "auth_user_id" }
-          );
+          .insert({
+            auth_user_id: session.user.id,
+            empresa_id: empId,
+            nome: session.user.email,
+            role: "admin",
+          })
+          .select("id, empresa_id, role")
+          .single();
 
-        if (upsertUsuarioError) {
+        if (usuarioInsertError || !novoUsuario) {
           console.error(
-            "Erro ao criar/atualizar usuário com empresa:",
-            upsertUsuarioError
+            "Erro ao criar usuario vinculado à empresa:",
+            usuarioInsertError
           );
           setLoadingInitialData(false);
           return;
         }
 
-        role = "admin";
+        role = novoUsuario.role;
       } else {
-        // 🔹 Usuário já existe e tem empresa_id
-        empId = usuario.empresa_id as string;
+        // 🔹 Já existe empresa vinculada
+        empId = String(usuario.empresa_id);
         role = usuario.role as "admin" | "user";
       }
 
-      if (!empId) {
-        console.error("Não foi possível determinar empresa_id.");
-        setLoadingInitialData(false);
-        return;
-      }
-
-      // guarda em estado
+      // Agora garantimos que sempre tem empresa_id e role
       setEmpresaId(empId);
       setIsAdmin(role === "admin");
 
