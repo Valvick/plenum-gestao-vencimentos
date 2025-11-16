@@ -405,7 +405,7 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
           email,
           password,
           options: {
-            emailRedirectTo: `${window.location.origin}/`,
+            emailRedirectTo: `${https://plenum-gestao-vencimentos.vercel.app/}/`,
           },
         });
 
