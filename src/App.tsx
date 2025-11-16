@@ -315,84 +315,68 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  // ============================================================
-  // GARANTE QUE EXISTA EMPRESA + USUÁRIO VINCULADO
-  // ============================================================
+  // garante que exista empresa + linha em public.usuarios para esse usuário
   const ensureEmpresaAndUsuario = async (session: Session) => {
-    const authId = session.user.id;
-    const email = session.user.email ?? "";
-
-    // 1) Verificar se já existe usuário
+    // 1) Verifica se já existe registro em public.usuarios
     const { data: usuario, error: usuarioError } = await supabase
       .from("usuarios")
-      .select("*")
-      .eq("auth_user_id", authId)
+      .select("empresa_id")
+      .eq("auth_user_id", session.user.id)
       .maybeSingle();
 
     if (usuarioError) {
-      console.error("Erro ao buscar usuário:", usuarioError);
-      return;
+      console.error("Erro ao buscar usuario em public.usuarios:", usuarioError);
+      throw new Error("Erro ao verificar vínculo do usuário com empresa.");
     }
 
-    // ============================================================
-    // CENÁRIO 1 — Usuário já existe E TEM empresa → OK
-    // ============================================================
+    // Se já existe empresa vinculada, não faz nada
     if (usuario && usuario.empresa_id) {
       return;
     }
 
-    // ============================================================
-    // CENÁRIO 2 — Usuário existe mas NÃO tem empresa → criar empresa
-    // ============================================================
-    if (usuario && !usuario.empresa_id) {
-      const { data: empresa, error: empErr } = await supabase
-        .from("empresas")
-        .insert({ nome: "Empresa de " + email })
-        .select()
-        .maybeSingle();
+    // 2) Pede o nome da empresa para o próprio usuário
+    const sugestaoNome =
+      "Empresa de " + (session.user.email ?? "usuário");
 
-      if (!empresa || empErr) {
-        console.error("Erro ao criar empresa:", empErr);
-        return;
-      }
+    const nomeDigitado =
+      window.prompt(
+        "Informe o nome da sua empresa para concluir o cadastro no SegVenc:",
+        sugestaoNome
+      ) ?? "";
 
-      await supabase
-        .from("usuarios")
-        .update({ empresa_id: empresa.id })
-        .eq("id", usuario.id);
+    const nomeEmpresaFinal =
+      nomeDigitado.trim() !== "" ? nomeDigitado.trim() : sugestaoNome;
 
-      return;
+    // 3) Cria empresa
+    const { data: novaEmpresa, error: empresaError } = await supabase
+      .from("empresas")
+      .insert({
+        nome: nomeEmpresaFinal,
+      })
+      .select("id")
+      .single();
+
+    if (empresaError || !novaEmpresa) {
+      console.error("Erro ao criar empresa:", empresaError);
+      throw new Error("Erro ao criar empresa para o usuário.");
     }
 
-    // ============================================================
-    // CENÁRIO 3 — Usuário NÃO existe → criar empresa + usuário
-    // ============================================================
-    if (!usuario) {
-      const { data: empresa, error: empresaErr } = await supabase
-        .from("empresas")
-        .insert({ nome: "Empresa de " + email })
-        .select()
-        .maybeSingle();
-
-      if (!empresa || empresaErr) {
-        console.error("Erro ao criar empresa:", empresaErr);
-        return;
-      }
-
-      await supabase.from("usuarios").insert({
-        auth_user_id: authId,
-        empresa_id: empresa.id,
-        nome: email,
-        role: "admin", // primeiro usuário vira admin
+    // 4) Cria vínculo em public.usuarios (admin)
+    const { error: usuarioInsertError } = await supabase
+      .from("usuarios")
+      .insert({
+        auth_user_id: session.user.id,
+        empresa_id: novaEmpresa.id,
+        nome: session.user.email,
+        role: "admin",
       });
 
-      return;
+    if (usuarioInsertError) {
+      console.error("Erro ao criar registro em usuarios:", usuarioInsertError);
+      throw new Error("Erro ao vincular usuário à empresa.");
     }
   };
 
-  // ============================================================
-  // SUBMIT (LOGIN / SIGNUP)
-  // ============================================================
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -400,64 +384,64 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
     setLoading(true);
 
     try {
-      // ============================================================
-      // LOGIN
-      // ============================================================
       if (isLogin) {
+        // ------ LOGIN ------
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
-
         if (error) throw error;
-        if (!data.session) throw new Error("Sessão não retornada.");
+        if (!data.session) {
+          throw new Error("Sessão não retornada no login.");
+        }
 
+        // 🔹 Aqui garantimos empresa + usuário SEM precisar ir no Supabase na mão
         await ensureEmpresaAndUsuario(data.session);
 
         onAuth(data.session);
-        return;
+      } else {
+        // ------ CADASTRO (apenas cria usuário no auth) ------
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/`,
+          },
+        });
+
+        if (error) throw error;
+
+        // Empresa será criada no PRIMEIRO LOGIN,
+        // quando ensureEmpresaAndUsuario rodar.
+        setInfo(
+          "Cadastro realizado. Enviamos um e-mail de confirmação. Após confirmar, volte e faça login."
+        );
+        setIsLogin(true);
       }
-
-      // ============================================================
-      // SIGNUP
-      // ============================================================
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/`,
-        },
-      });
-
-      if (error) throw error;
-
-      setInfo(
-        "Cadastro realizado! Enviamos um e-mail de confirmação. Após confirmar, volte e faça login."
-      );
-
-      // Não tenta autenticar nem vincular nada aqui
-      // O vínculo é feito automaticamente APÓS o login
-      setIsLogin(true);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Erro ao autenticar.");
+      setError(
+        err.message ||
+          "Erro ao autenticar. Verifique os dados ou tente novamente."
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  // ============================================================
-  // UI
-  // ============================================================
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4">
       <div className="w-full max-w-md bg-white/95 backdrop-blur rounded-[32px] shadow-2xl p-8 space-y-6 border border-slate-200">
+        {/* Logo + Nome */}
         <div className="flex flex-col items-center gap-3">
           <div className="w-16 h-16 rounded-2xl bg-sky-900 flex items-center justify-center shadow-lg overflow-hidden">
             <img
               src="/plenum_icon_192x192.png"
               alt="SegVenc"
               className="w-14 h-14 object-contain"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = "none";
+              }}
             />
           </div>
           <div className="text-center space-y-1">
@@ -484,30 +468,38 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
           )}
 
           <div className="space-y-1 text-sm">
-            <label className="font-semibold text-slate-700 text-xs">
+            <label
+              className="font-semibold text-slate-700 text-xs"
+              htmlFor="email"
+            >
               E-mail corporativo
             </label>
             <input
+              id="email"
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 bg-slate-50"
+              className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 bg-slate-50"
               placeholder="voce@empresa.com.br"
             />
           </div>
 
           <div className="space-y-1 text-sm">
-            <label className="font-semibold text-slate-700 text-xs">
+            <label
+              className="font-semibold text-slate-700 text-xs"
+              htmlFor="password"
+            >
               Senha
             </label>
             <input
+              id="password"
               type="password"
               required
               minLength={6}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 bg-slate-50"
+              className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 bg-slate-50"
               placeholder="Sua senha"
             />
           </div>
@@ -531,12 +523,12 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
               Ainda não tem acesso?{" "}
               <button
                 type="button"
+                className="text-sky-600 font-semibold hover:underline"
                 onClick={() => {
                   setError(null);
                   setInfo(null);
                   setIsLogin(false);
                 }}
-                className="text-sky-600 font-semibold hover:underline"
               >
                 Criar conta
               </button>
@@ -546,12 +538,12 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
               Já possui conta?{" "}
               <button
                 type="button"
+                className="text-sky-600 font-semibold hover:underline"
                 onClick={() => {
                   setError(null);
                   setInfo(null);
                   setIsLogin(true);
                 }}
-                className="text-sky-600 font-semibold hover:underline"
               >
                 Fazer login
               </button>
