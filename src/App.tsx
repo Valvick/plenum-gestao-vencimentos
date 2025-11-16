@@ -302,7 +302,7 @@ function mapUsuarioFromDb(row: DbUsuario): UsuarioInterno {
 }
 
 // =========================
-// Tela de Login (SegVenc)
+// Tela de Login (SegVenc) + cadastro de empresa
 // =========================
 
 const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
@@ -315,12 +315,25 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  // garante que exista empresa + linha em public.usuarios para esse usuário
+  // Campos extras para cadastro (sign up)
+  const [companyName, setCompanyName] = useState("");
+  const [companyCnpj, setCompanyCnpj] = useState("");
+  const [companyEmail, setCompanyEmail] = useState("");
+
+  /**
+   * Garante que exista empresa + linha em public.usuarios
+   * para o usuário logado.
+   *
+   * Usa os dados de user_metadata preenchidos no cadastro:
+   *  - company_name
+   *  - company_cnpj
+   *  - company_email_notificacao
+   */
   const ensureEmpresaAndUsuario = async (session: Session) => {
-    // 1) Verifica se já existe registro em public.usuarios
+    // 1) Ver se já existe linha para esse auth_user_id
     const { data: usuario, error: usuarioError } = await supabase
       .from("usuarios")
-      .select("empresa_id")
+      .select("id, empresa_id")
       .eq("auth_user_id", session.user.id)
       .maybeSingle();
 
@@ -329,51 +342,67 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
       throw new Error("Erro ao verificar vínculo do usuário com empresa.");
     }
 
-    // Se já existe empresa vinculada, não faz nada
-    if (usuario && usuario.empresa_id) {
-      return;
+    // Metadados vindos do cadastro
+    const meta = (session.user.user_metadata || {}) as any;
+
+    const nomeEmpresa =
+      meta.company_name ||
+      `Empresa de ${session.user.email ?? "usuário"}`;
+
+    const cnpjEmpresa = meta.company_cnpj || null;
+    const emailNotif =
+      meta.company_email_notificacao || session.user.email || null;
+
+    let empresaId: string | null = (usuario?.empresa_id as string | null) ?? null;
+
+    // 2) Se ainda não tem empresa_id, criamos a empresa
+    if (!empresaId) {
+      const { data: novaEmpresa, error: empresaError } = await supabase
+        .from("empresas")
+        .insert({
+          nome: nomeEmpresa,
+          cnpj: cnpjEmpresa,
+          email_notificacao: emailNotif,
+        })
+        .select("id")
+        .single();
+
+      if (empresaError || !novaEmpresa) {
+        console.error("Erro ao criar empresa:", empresaError);
+        throw new Error("Erro ao criar empresa para o usuário.");
+      }
+
+      empresaId = novaEmpresa.id;
     }
 
-    // 2) Pede o nome da empresa para o próprio usuário
-    const sugestaoNome =
-      "Empresa de " + (session.user.email ?? "usuário");
+    // 3) Garantir linha em public.usuarios com empresa_id preenchido
+    if (usuario?.id) {
+      // Já existe usuário, só atualiza empresa_id (e nome se quiser)
+      const { error: updError } = await supabase
+        .from("usuarios")
+        .update({
+          empresa_id: empresaId,
+          nome: session.user.email,
+        })
+        .eq("id", usuario.id);
 
-    const nomeDigitado =
-      window.prompt(
-        "Informe o nome da sua empresa para concluir o cadastro no SegVenc:",
-        sugestaoNome
-      ) ?? "";
-
-    const nomeEmpresaFinal =
-      nomeDigitado.trim() !== "" ? nomeDigitado.trim() : sugestaoNome;
-
-    // 3) Cria empresa
-    const { data: novaEmpresa, error: empresaError } = await supabase
-      .from("empresas")
-      .insert({
-        nome: nomeEmpresaFinal,
-      })
-      .select("id")
-      .single();
-
-    if (empresaError || !novaEmpresa) {
-      console.error("Erro ao criar empresa:", empresaError);
-      throw new Error("Erro ao criar empresa para o usuário.");
-    }
-
-    // 4) Cria vínculo em public.usuarios (admin)
-    const { error: usuarioInsertError } = await supabase
-      .from("usuarios")
-      .insert({
+      if (updError) {
+        console.error("Erro ao atualizar usuario:", updError);
+        throw new Error("Erro ao vincular usuário à empresa.");
+      }
+    } else {
+      // Não existe ainda: criar linha em usuarios
+      const { error: insertError } = await supabase.from("usuarios").insert({
         auth_user_id: session.user.id,
-        empresa_id: novaEmpresa.id,
+        empresa_id: empresaId,
         nome: session.user.email,
         role: "admin",
       });
 
-    if (usuarioInsertError) {
-      console.error("Erro ao criar registro em usuarios:", usuarioInsertError);
-      throw new Error("Erro ao vincular usuário à empresa.");
+      if (insertError) {
+        console.error("Erro ao criar registro em usuarios:", insertError);
+        throw new Error("Erro ao vincular usuário à empresa.");
+      }
     }
   };
 
@@ -385,34 +414,48 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
 
     try {
       if (isLogin) {
-        // ------ LOGIN ------
+        // =====================
+        // LOGIN
+        // =====================
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
+
         if (error) throw error;
         if (!data.session) {
           throw new Error("Sessão não retornada no login.");
         }
 
-        // 🔹 Aqui garantimos empresa + usuário SEM precisar ir no Supabase na mão
+        // Aqui garantimos empresa + usuario
         await ensureEmpresaAndUsuario(data.session);
 
         onAuth(data.session);
       } else {
-        // ------ CADASTRO (apenas cria usuário no auth) ------
+        // =====================
+        // CADASTRO (SIGN UP)
+        // =====================
+        if (!companyName.trim()) {
+          throw new Error("Informe o nome da empresa para continuar.");
+        }
+
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: {
-            emailRedirectTo: `${https://plenum-gestao-vencimentos.vercel.app/}/`,
+            emailRedirectTo: `${window.location.origin}/`,
+            // Metadados que vamos usar depois, no primeiro login,
+            // para criar empresa + usuarios
+            data: {
+              company_name: companyName,
+              company_cnpj: companyCnpj,
+              company_email_notificacao: companyEmail,
+            },
           },
         });
 
         if (error) throw error;
 
-        // Empresa será criada no PRIMEIRO LOGIN,
-        // quando ensureEmpresaAndUsuario rodar.
         setInfo(
           "Cadastro realizado. Enviamos um e-mail de confirmação. Após confirmar, volte e faça login."
         );
@@ -432,7 +475,6 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4">
       <div className="w-full max-w-md bg-white/95 backdrop-blur rounded-[32px] shadow-2xl p-8 space-y-6 border border-slate-200">
-        {/* Logo + Nome */}
         <div className="flex flex-col items-center gap-3">
           <div className="w-16 h-16 rounded-2xl bg-sky-900 flex items-center justify-center shadow-lg overflow-hidden">
             <img
@@ -467,6 +509,7 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
             </div>
           )}
 
+          {/* E-mail + senha (sempre) */}
           <div className="space-y-1 text-sm">
             <label
               className="font-semibold text-slate-700 text-xs"
@@ -503,6 +546,58 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
               placeholder="Sua senha"
             />
           </div>
+
+          {/* Campos extra apenas no cadastro */}
+          {!isLogin && (
+            <div className="space-y-3 pt-3 border-t border-slate-100 mt-1">
+              <p className="text-[11px] font-semibold text-slate-600">
+                Dados da empresa
+              </p>
+
+              <div className="space-y-1 text-sm">
+                <label className="font-semibold text-slate-700 text-xs">
+                  Nome da empresa
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 bg-slate-50"
+                  placeholder="Ex.: CGB - Distribuição de Energia"
+                />
+              </div>
+
+              <div className="space-y-1 text-sm">
+                <label className="font-semibold text-slate-700 text-xs">
+                  CNPJ (opcional)
+                </label>
+                <input
+                  type="text"
+                  value={companyCnpj}
+                  onChange={(e) => setCompanyCnpj(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 bg-slate-50"
+                  placeholder="00.000.000/0000-00"
+                />
+              </div>
+
+              <div className="space-y-1 text-sm">
+                <label className="font-semibold text-slate-700 text-xs">
+                  E-mail para notificações (opcional)
+                </label>
+                <input
+                  type="email"
+                  value={companyEmail}
+                  onChange={(e) => setCompanyEmail(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 bg-slate-50"
+                  placeholder="seguranca@empresa.com.br"
+                />
+                <p className="text-[10px] text-slate-400">
+                  Se deixar em branco, usaremos o próprio e-mail de login.
+                </p>
+              </div>
+            </div>
+          )}
 
           <button
             type="submit"
