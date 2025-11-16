@@ -69,7 +69,21 @@ type CustomFilter = {
   usarNosRegistros: boolean;
 };
 
-type TabKey = "dashboard" | "registros" | "colaboradores" | "exames" | "campos";
+// 👉 Novo tipo
+type UsuarioInterno = {
+  id: number;
+  authUserId: string;
+  nome: string | null;
+  role: "admin" | "user";
+};
+
+type TabKey =
+  | "dashboard"
+  | "registros"
+  | "colaboradores"
+  | "exames"
+  | "campos"
+  | "usuarios";
 
 // =========================
 // Utilitários
@@ -166,9 +180,7 @@ function parseCsv(text: string): string[][] {
   const lines = text.trim().split(/\r?\n/);
   return lines.map((line) => {
     const sep = line.includes(";") ? ";" : ",";
-    return line
-      .split(sep)
-      .map((cell) => cell.replace(/^"|"$/g, ""));
+    return line.split(sep).map((cell) => cell.replace(/^"|"$/g, ""));
   });
 }
 
@@ -222,6 +234,14 @@ type DbCustomFilter = {
   usar_nos_registros: boolean;
 };
 
+type DbUsuario = {
+  id: number;
+  auth_user_id: string;
+  empresa_id: string;
+  nome: string | null;
+  role: "admin" | "user";
+};
+
 function mapColaboradorFromDb(row: DbColaborador): Colaborador {
   return {
     id: row.id,
@@ -268,6 +288,15 @@ function mapCustomFilterFromDb(row: DbCustomFilter): CustomFilter {
     origem: row.origem,
     usarNoDashboard: row.usar_no_dashboard,
     usarNosRegistros: row.usar_nos_registros,
+  };
+}
+
+function mapUsuarioFromDb(row: DbUsuario): UsuarioInterno {
+  return {
+    id: row.id,
+    authUserId: row.auth_user_id,
+    nome: row.nome,
+    role: row.role,
   };
 }
 
@@ -400,12 +429,12 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
       } else {
         // ------ CADASTRO (apenas cria usuário no auth) ------
         const { data, error } = await supabase.auth.signUp({
-  email,
-  password,
-  options: {
-    emailRedirectTo: `${window.location.origin}/`,
-  },
-});
+          email,
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/`,
+          },
+        });
 
         if (error) throw error;
 
@@ -434,7 +463,7 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
         <div className="flex flex-col items-center gap-3">
           <div className="w-16 h-16 rounded-2xl bg-sky-900 flex items-center justify-center shadow-lg overflow-hidden">
             <img
-              src="/plenum_icon_192x192.png"  // ícone mantém o mesmo arquivo
+              src="/plenum_icon_192x192.png" // mantém o arquivo do ícone
               alt="SegVenc"
               className="w-14 h-14 object-contain"
               onError={(e) => {
@@ -1421,7 +1450,6 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
 type ColaboradoresViewProps = {
   colaboradores: Colaborador[];
   setColaboradores: (rows: Colaborador[]) => void;
-  customFilters: CustomFilter[];
 };
 
 const ColaboradoresView: React.FC<ColaboradoresViewProps> = ({
@@ -1884,7 +1912,9 @@ const CamposFiltrosView: React.FC<CamposFiltrosViewProps> = ({
   setCustomFilters,
 }) => {
   const adicionarCampo = () => {
-    const nome = window.prompt("Nome do campo personalizado (sem espaços especiais):");
+    const nome = window.prompt(
+      "Nome do campo personalizado (sem espaços especiais):"
+    );
     if (!nome) return;
 
     const novo: CustomFilter = {
@@ -2012,6 +2042,141 @@ const CamposFiltrosView: React.FC<CamposFiltrosViewProps> = ({
 };
 
 // =========================
+// TELA DE GESTÃO DE USUÁRIOS INTERNOS
+// =========================
+
+type UsuariosViewProps = {
+  usuarios: UsuarioInterno[];
+  currentUserId: string;
+  isAdmin: boolean;
+  onChangeRole: (id: number, newRole: "admin" | "user") => void;
+};
+
+const UsuariosView: React.FC<UsuariosViewProps> = ({
+  usuarios,
+  currentUserId,
+  isAdmin,
+  onChangeRole,
+}) => {
+  const isEmpty = usuarios.length === 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-start gap-4">
+        <div className="space-y-1">
+          <h2 className="text-sm font-semibold text-slate-800">
+            Usuários da empresa
+          </h2>
+          <p className="text-xs text-slate-500 max-w-xl">
+            Aqui você acompanha quem tem acesso ao SegVenc na sua empresa.{" "}
+            <span className="font-semibold">
+              Somente administradores podem alterar perfis.
+            </span>
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() =>
+            alert(
+              "Em breve: convite de novos usuários por e-mail direto aqui pelo SegVenc."
+            )
+          }
+          className="rounded-full bg-slate-900 text-white px-3 py-1.5 text-[11px] font-semibold shadow hover:bg-slate-800 disabled:opacity-50"
+          disabled={!isAdmin}
+        >
+          + Convidar usuário (em breve)
+        </button>
+      </div>
+
+      {!isAdmin && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+          Seu perfil não é administrador. Você pode apenas visualizar os usuários
+          da empresa.
+        </div>
+      )}
+
+      <div className="border border-slate-200 rounded-3xl overflow-auto bg-white">
+        <table className="w-full text-xs min-w-[520px]">
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="px-3 py-2 text-left font-semibold">Nome</th>
+              <th className="px-3 py-2 text-left font-semibold">Referência</th>
+              <th className="px-3 py-2 text-left font-semibold">
+                Tipo de acesso
+              </th>
+              <th className="px-3 py-2 text-left font-semibold w-24">
+                Situação
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {isEmpty ? (
+              <tr>
+                <td
+                  colSpan={4}
+                  className="px-3 py-4 text-center text-[11px] text-slate-400"
+                >
+                  Nenhum usuário encontrado para esta empresa.
+                </td>
+              </tr>
+            ) : (
+              usuarios.map((u) => {
+                const isSelf = u.authUserId === currentUserId;
+
+                return (
+                  <tr
+                    key={u.id}
+                    className="border-t border-slate-100 hover:bg-slate-50/60"
+                  >
+                    <td className="px-3 py-2 text-xs">
+                      <div className="flex flex-col">
+                        <span className="font-semibold text-slate-800">
+                          {u.nome || "Sem nome cadastrado"}
+                        </span>
+                        {isSelf && (
+                          <span className="text-[10px] text-slate-400">
+                            (você)
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-600">
+                      {u.nome || "-"}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      <select
+                        className="border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white disabled:bg-slate-50 disabled:text-slate-400"
+                        value={u.role}
+                        disabled={!isAdmin || isSelf}
+                        onChange={(e) =>
+                          onChangeRole(
+                            u.id,
+                            e.target.value as "admin" | "user"
+                          )
+                        }
+                      >
+                        <option value="admin">Administrador</option>
+                        <option value="user">Usuário</option>
+                      </select>
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">
+                        {u.role === "admin" ? "Gerencia acessos" : "Acesso comum"}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+// =========================
 // APP PRINCIPAL
 // =========================
 
@@ -2036,6 +2201,152 @@ const App: React.FC = () => {
     tipo: "",
     custom: {} as Record<string, string>,
   });
+
+  const [usuariosInternos, setUsuariosInternos] = useState<UsuarioInterno[]>(
+    []
+  );
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+
+    const [saving, setSaving] = useState<boolean>(false);
+
+  // =========================
+  // Salvar dados no Supabase
+  // =========================
+
+  const salvarColaboradores = async () => {
+    if (!empresaId) {
+      alert("Empresa não definida. Faça login novamente.");
+      return;
+    }
+
+    const payload = colaboradores.map((c) => ({
+      id: c.id,
+      empresa_id: empresaId,
+      matricula: c.matricula || null,
+      nome: c.nome || null,
+      funcao: c.funcao || null,
+      setor: c.setor || null,
+      base_operacional: c.baseOperacional || null,
+      data_admissao: c.dataAdmissao || null,
+    }));
+
+    const { error } = await supabase
+      .from("colaboradores")
+      .upsert(payload, { onConflict: "id" });
+
+    if (error) {
+      console.error("Erro ao salvar colaboradores:", error);
+      throw new Error("Erro ao salvar colaboradores.");
+    }
+  };
+
+  const salvarExames = async () => {
+    if (!empresaId) {
+      alert("Empresa não definida. Faça login novamente.");
+      return;
+    }
+
+    const payload = exames.map((e) => ({
+      id: e.id,
+      empresa_id: empresaId,
+      tipo: e.tipo,
+      nome: e.nome,
+      validade_dias: e.validadeDias,
+    }));
+
+    const { error } = await supabase
+      .from("exames_cursos")
+      .upsert(payload, { onConflict: "id" });
+
+    if (error) {
+      console.error("Erro ao salvar exames/cursos:", error);
+      throw new Error("Erro ao salvar exames/cursos.");
+    }
+  };
+
+  const salvarRegistros = async () => {
+    if (!empresaId) {
+      alert("Empresa não definida. Faça login novamente.");
+      return;
+    }
+
+    const payload = registros.map((r) => ({
+      id: r.id,
+      empresa_id: empresaId,
+      matricula: r.matricula || null,
+      colaborador_nome: r.colaboradorNome || null,
+      funcao: r.funcao || null,
+      setor: r.setor || null,
+      base_operacional: r.baseOperacional || null,
+      tipo: r.tipo,
+      curso_exame: r.cursoExame,
+      data_admissao: r.dataAdmissao || null,
+      data_ultimo_evento: r.dataUltimoEvento || null,
+      vencimento: r.vencimento || null,
+      qtde_dias:
+        typeof r.qtdeDias === "number" ? r.qtdeDias : null,
+      status: r.status ?? null,
+    }));
+
+    const { error } = await supabase
+      .from("registros")
+      .upsert(payload, { onConflict: "id" });
+
+    if (error) {
+      console.error("Erro ao salvar registros:", error);
+      throw new Error("Erro ao salvar registros.");
+    }
+  };
+
+  const salvarCamposFiltros = async () => {
+    if (!empresaId) {
+      alert("Empresa não definida. Faça login novamente.");
+      return;
+    }
+
+    const payload = customFilters.map((cf) => ({
+      id: Number(cf.id),
+      empresa_id: empresaId,
+      nome: cf.nome,
+      origem: cf.origem,
+      usar_no_dashboard: cf.usarNoDashboard,
+      usar_nos_registros: cf.usarNosRegistros,
+    }));
+
+    const { error } = await supabase
+      .from("custom_filters")
+      .upsert(payload, { onConflict: "id" });
+
+    if (error) {
+      console.error("Erro ao salvar campos/filtros personalizados:", error);
+      throw new Error("Erro ao salvar campos/filtros.");
+    }
+  };
+
+  const salvarTudo = async () => {
+    if (!empresaId) {
+      alert("Empresa não definida. Faça login novamente.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await salvarExames();
+      await salvarColaboradores();
+      await salvarRegistros();
+      await salvarCamposFiltros();
+      alert("Dados da empresa salvos com sucesso no SegVenc.");
+    } catch (err) {
+      console.error("Erro ao salvar dados:", err);
+      alert(
+        "Não foi possível salvar todos os dados. Verifique o console e tente novamente."
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+
 
   // =========================
   // Logout
@@ -2080,10 +2391,10 @@ const App: React.FC = () => {
       setLoadingInitialData(true);
 
       try {
-        // 1) pegar empresa_id do usuário logado
+        // 1) pegar empresa_id e role do usuário logado
         const { data: usuario, error: userError } = await supabase
           .from("usuarios")
-          .select("empresa_id")
+          .select("empresa_id, role")
           .eq("auth_user_id", session.user.id)
           .single();
 
@@ -2095,6 +2406,7 @@ const App: React.FC = () => {
 
         const empId = usuario.empresa_id as string;
         setEmpresaId(empId);
+        setIsAdmin(usuario.role === "admin");
 
         // 2) colaboradores
         const { data: colabs, error: colabError } = await supabase
@@ -2145,6 +2457,18 @@ const App: React.FC = () => {
         } else if (filters) {
           setCustomFilters(filters.map(mapCustomFilterFromDb));
         }
+
+        // 6) usuarios da empresa
+        const { data: usersData, error: usersError } = await supabase
+          .from("usuarios")
+          .select("id, auth_user_id, empresa_id, nome, role")
+          .eq("empresa_id", empId);
+
+        if (usersError) {
+          console.error("Erro ao carregar usuarios:", usersError);
+        } else if (usersData) {
+          setUsuariosInternos(usersData.map(mapUsuarioFromDb));
+        }
       } catch (err) {
         console.error("Erro inesperado ao carregar dados:", err);
       } finally {
@@ -2155,6 +2479,33 @@ const App: React.FC = () => {
     loadAllData();
   }, [session]);
 
+  const handleChangeUserRole = async (
+    id: number,
+    newRole: "admin" | "user"
+  ) => {
+    try {
+      const { error } = await supabase
+        .from("usuarios")
+        .update({ role: newRole })
+        .eq("id", id);
+
+      if (error) {
+        console.error("Erro ao atualizar role do usuário:", error);
+        alert(
+          "Não foi possível atualizar o tipo de acesso. Verifique se você é administrador."
+        );
+        return;
+      }
+
+      setUsuariosInternos((prev) =>
+        prev.map((u) => (u.id === id ? { ...u, role: newRole } : u))
+      );
+    } catch (err) {
+      console.error("Erro inesperado ao atualizar usuário:", err);
+      alert("Erro inesperado ao atualizar o usuário.");
+    }
+  };
+
   if (!session) {
     return <AuthScreen onAuth={setSession} />;
   }
@@ -2162,158 +2513,177 @@ const App: React.FC = () => {
   if (loadingInitialData) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-100">
-        <div className="bg-white px-6 py-4 rounded-2xl shadow text-sm text-slate-600 border border-slate-200">
-          Carregando dados do Supabase...
+        <div className="bg-white rounded-3xl shadow px-6 py-4 text-sm text-slate-600">
+          Carregando dados da sua empresa...
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
+    <div className="min-h-screen bg-slate-100 flex flex-col">
       {/* HEADER */}
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white/80 backdrop-blur px-6 py-3 relative">
-        {/* LOGO */}
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-2xl bg-sky-900 flex items-center justify-center shadow-md overflow-hidden">
-            <img
-              src="/plenum_icon_192x192.png"
-              alt="Logo"
-              className="w-8 h-8 object-contain"
-            />
-          </div>
-          <div className="flex flex-col leading-tight">
-            <span className="text-sm font-semibold text-slate-900">
-              SegVenc
-            </span>
-            <span className="text-[11px] text-slate-500">
-              Gestão de Vencimentos
-            </span>
-          </div>
-        </div>
-
-        {/* USUÁRIO */}
-        <div className="relative">
-          <button
-            onClick={() => setMenuOpen(!menuOpen)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl hover:bg-slate-100 transition"
-          >
-            <div className="w-8 h-8 rounded-full bg-sky-600 text-white flex items-center justify-center font-semibold">
-              {session?.user?.email?.[0]?.toUpperCase() || "U"}
+      <header className="bg-white border-b border-slate-200">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-2xl bg-sky-900 flex items-center justify-center shadow-md overflow-hidden">
+              <img
+                src="/plenum_icon_192x192.png"
+                alt="SegVenc"
+                className="w-8 h-8 object-contain"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none";
+                }}
+              />
             </div>
-
-            <div className="text-left leading-tight hidden sm:block">
-              <span className="text-xs font-semibold text-slate-800 block">
-                {session?.user?.user_metadata?.full_name || "Usuário"}
+            <div className="flex flex-col">
+              <span className="text-sm font-extrabold text-slate-900">
+                SegVenc
               </span>
-              <span className="text-[11px] text-slate-500 block">
-                {session?.user?.email}
+              <span className="text-[11px] text-slate-500">
+                Gestão de vencimentos de exames, cursos e ASO
               </span>
             </div>
-          </button>
+          </div>
 
-          {menuOpen && (
-            <div className="absolute right-0 mt-2 w-44 bg-white shadow-xl rounded-xl border border-slate-200 py-2 text-sm z-50">
-              <button
-                className="w-full text-left px-4 py-2 hover:bg-slate-100"
-                onClick={() => alert("Perfil em desenvolvimento")}
-              >
-                Perfil
-              </button>
+          {/* Usuário / menu */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs shadow-sm hover:bg-slate-50"
+            >
+              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-sky-600 text-[11px] font-semibold text-white">
+                {session.user.email?.[0]?.toUpperCase() ?? "U"}
+              </span>
+              <span className="hidden sm:inline text-slate-700 max-w-[140px] truncate">
+                {session.user.email}
+              </span>
+              <span className="text-slate-400 text-[10px]">▼</span>
+            </button>
 
-              <button
-                className="w-full text-left px-4 py-2 hover:bg-slate-100"
-                onClick={() =>
-                  alert("Função de alterar senha em desenvolvimento")
-                }
-              >
-                Alterar senha
-              </button>
+            {menuOpen && (
+              <div className="absolute right-0 mt-2 w-44 bg-white border border-slate-200 rounded-2xl shadow-lg text-xs z-10">
+                <button
+                  className="w-full text-left px-4 py-2 hover:bg-slate-100"
+                  onClick={() => alert("Perfil em desenvolvimento")}
+                >
+                  Perfil
+                </button>
 
-              <button
-                className="w-full text-left px-4 py-2 text-rose-600 hover:bg-rose-50"
-                onClick={handleSignOut}
-              >
-                Sair
-              </button>
-            </div>
-          )}
+                <button
+                  className="w-full text-left px-4 py-2 hover:bg-slate-100"
+                  onClick={() =>
+                    alert("Função de alterar senha em desenvolvimento")
+                  }
+                >
+                  Alterar senha
+                </button>
+
+                <button
+                  className="w-full text-left px-4 py-2 text-rose-600 hover:bg-rose-50"
+                  onClick={handleSignOut}
+                >
+                  Sair
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
-      {/* CONTEÚDO PRINCIPAL */}
-      <main className="max-w-6xl mx-auto px-4 py-4 w-full flex-1">
-        {/* Abas */}
-        <div className="flex gap-2 mb-4">
-          {(
-            [
-              ["dashboard", "Dashboard"],
-              ["registros", "Registros"],
-              ["colaboradores", "Colaboradores"],
-              ["exames", "Exames/Cursos"],
-              ["campos", "Campos & Filtros"],
-            ] as [TabKey, string][]
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setCurrentTab(key)}
-              className={classNames(
-                "px-3 py-1.5 rounded-full text-xs font-semibold border",
-                currentTab === key
-                  ? "bg-sky-600 text-white border-sky-600 shadow"
-                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Conteúdo da aba */}
-        <div className="bg-slate-50/60 border border-slate-200 rounded-3xl p-4 shadow-sm">
-          {currentTab === "dashboard" && (
-            <DashboardView
-              registros={registros}
-              colaboradores={colaboradores}
-              filtrosDashboard={filtrosDashboard}
-              onChangeFiltros={setFiltrosDashboard}
-              customFilters={customFilters}
-            />
+       {/* CONTEÚDO PRINCIPAL */}
+  <main className="max-w-6xl mx-auto px-4 py-4 w-full flex-1">
+    {/* Abas */}
+    <div className="flex gap-2 mb-4">
+      {(
+        [
+          ["dashboard", "Dashboard"],
+          ["registros", "Registros"],
+          ["colaboradores", "Colaboradores"],
+          ["exames", "Exames/Cursos"],
+          ["campos", "Campos & Filtros"],
+          ["usuarios", "Usuários"],
+        ] as [TabKey, string][]
+      ).map(([key, label]) => (
+        <button
+          key={key}
+          type="button"
+          onClick={() => setCurrentTab(key)}
+          className={classNames(
+            "px-3 py-1.5 rounded-full text-xs font-semibold border",
+            currentTab === key
+              ? "bg-sky-600 text-white border-sky-600 shadow"
+              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
           )}
-
-          {currentTab === "registros" && (
-            <RegistrosView
-              registros={registros}
-              setRegistros={setRegistros}
-              colaboradores={colaboradores}
-              customFilters={customFilters}
-              exames={exames}
-            />
-          )}
-
-          {currentTab === "colaboradores" && (
-            <ColaboradoresView
-              colaboradores={colaboradores}
-              setColaboradores={setColaboradores}
-              customFilters={customFilters}
-            />
-          )}
-
-          {currentTab === "exames" && (
-            <ExamesView exames={exames} setExames={setExames} />
-          )}
-
-          {currentTab === "campos" && (
-            <CamposFiltrosView
-              customFilters={customFilters}
-              setCustomFilters={setCustomFilters}
-            />
-          )}
-        </div>
-      </main>
+        >
+          {label}
+        </button>
+      ))}
     </div>
-  );
-};
+
+    {/* Botão salvar dados */}
+    <div className="flex justify-end mb-3">
+      <button
+        type="button"
+        onClick={salvarTudo}
+        disabled={saving || !empresaId}
+        className="rounded-full bg-emerald-600 text-white px-4 py-1.5 text-[11px] font-semibold shadow hover:bg-emerald-700 disabled:opacity-60"
+      >
+        {saving ? "Salvando dados..." : "Salvar dados da empresa"}
+      </button>
+    </div>
+
+    {/* Views */}
+    {currentTab === "dashboard" && (
+      <DashboardView
+        registros={registros}
+        colaboradores={colaboradores}
+        filtrosDashboard={filtrosDashboard}
+        onChangeFiltros={setFiltrosDashboard}
+        customFilters={customFilters}
+      />
+    )}
+
+    {currentTab === "registros" && (
+      <RegistrosView
+        registros={registros}
+        setRegistros={setRegistros}
+        colaboradores={colaboradores}
+        customFilters={customFilters}
+        exames={exames}
+      />
+    )}
+
+    {currentTab === "colaboradores" && (
+      <ColaboradoresView
+        colaboradores={colaboradores}
+        setColaboradores={setColaboradores}
+      />
+    )}
+
+    {currentTab === "exames" && (
+      <ExamesView exames={exames} setExames={setExames} />
+    )}
+
+    {currentTab === "campos" && (
+      <CamposFiltrosView
+        customFilters={customFilters}
+        setCustomFilters={setCustomFilters}
+      />
+    )}
+
+    {currentTab === "usuarios" && (
+      <UsuariosView
+        usuarios={usuariosInternos}
+        currentUserId={session.user.id}
+        isAdmin={isAdmin}
+        onChangeRole={handleChangeUserRole}
+      />
+    )}
+  </main>
+</div>
+);
+};   // <-- fecha o componente App
 
 export default App;
