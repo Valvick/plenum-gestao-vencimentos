@@ -3,8 +3,8 @@
   "short_name": "SegVenc",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#020617",
-  "theme_color": "#0f172a",
+  "background_color": "#1D3557",
+  "theme_color": "#1D3557",
   "icons": [
     { "src": "/plenum_icon_72x72.png", "sizes": "72x72", "type": "image/png" },
     { "src": "/plenum_icon_96x96.png", "sizes": "96x96", "type": "image/png" },
@@ -16,3 +16,4 @@
     { "src": "/plenum_icon_512x512.png", "sizes": "512x512", "type": "image/png" }
   ]
 }
+

@@ -83,7 +83,8 @@ type TabKey =
   | "colaboradores"
   | "exames"
   | "campos"
-  | "usuarios";
+  | "usuarios"
+  | "empresas";
 
 // =========================
 // Utilitários
@@ -301,45 +302,6 @@ function mapUsuarioFromDb(row: DbUsuario): UsuarioInterno {
 }
 
 // =========================
-// Componentes de UI
-// =========================
-
-const StatCard: React.FC<{
-  title: string;
-  value: number;
-  subtitle: string;
-  color: "blue" | "red" | "amber" | "green";
-}> = ({ title, value, subtitle, color }) => {
-  const mapBg: Record<string, string> = {
-    blue: "from-sky-500 to-indigo-600 text-sky-50",
-    red: "from-rose-500 to-red-600 text-rose-50",
-    amber: "from-amber-400 to-orange-500 text-amber-950",
-    green: "from-emerald-500 to-emerald-600 text-emerald-50",
-  };
-
-  return (
-    <div className="relative overflow-hidden rounded-3xl shadow-md border border-slate-200">
-      <div
-        className={classNames(
-          "p-4 flex flex-col gap-1 bg-gradient-to-br",
-          mapBg[color]
-        )}
-      >
-        <span className="text-[11px] font-semibold uppercase tracking-wide opacity-95">
-          {title}
-        </span>
-        <span className="text-3xl font-extrabold leading-tight drop-shadow-sm">
-          {value}
-        </span>
-        <span className="text-[11px] font-semibold opacity-95">
-          {subtitle}
-        </span>
-      </div>
-    </div>
-  );
-};
-
-// =========================
 // Tela de Login (SegVenc)
 // =========================
 
@@ -355,7 +317,6 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
 
   // garante que exista empresa + linha em public.usuarios para esse usuário
   const ensureEmpresaAndUsuario = async (session: Session) => {
-    // 1) verifica se já existe registro em public.usuarios
     const { data: usuario, error: usuarioError } = await supabase
       .from("usuarios")
       .select("empresa_id")
@@ -367,12 +328,10 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
       throw new Error("Erro ao verificar vínculo do usuário com empresa.");
     }
 
-    // se já existe empresa vinculada, não faz nada
     if (usuario && usuario.empresa_id) {
       return;
     }
 
-    // 2) cria empresa padrão
     const nomeEmpresaPadrao = "Empresa de " + (session.user.email ?? "usuário");
 
     const { data: novaEmpresa, error: empresaError } = await supabase
@@ -388,7 +347,6 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
       throw new Error("Erro ao criar empresa para o usuário.");
     }
 
-    // 3) cria vínculo em public.usuarios (admin)
     const { error: usuarioInsertError } = await supabase
       .from("usuarios")
       .insert({
@@ -412,7 +370,6 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
 
     try {
       if (isLogin) {
-        // ------ LOGIN ------
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -422,12 +379,10 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
           throw new Error("Sessão não retornada no login.");
         }
 
-        // garante empresa + usuario
         await ensureEmpresaAndUsuario(data.session);
 
         onAuth(data.session);
       } else {
-        // ------ CADASTRO (apenas cria usuário no auth) ------
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -438,8 +393,6 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
 
         if (error) throw error;
 
-        // Aqui não criamos empresa ainda por causa do e-mail de confirmação.
-        // A empresa será criada no primeiro login após confirmação.
         setInfo(
           "Cadastro realizado. Enviamos um e-mail de confirmação. Após confirmar, volte e faça login."
         );
@@ -459,11 +412,10 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4">
       <div className="w-full max-w-md bg-white/95 backdrop-blur rounded-[32px] shadow-2xl p-8 space-y-6 border border-slate-200">
-        {/* Logo + Nome */}
         <div className="flex flex-col items-center gap-3">
           <div className="w-16 h-16 rounded-2xl bg-sky-900 flex items-center justify-center shadow-lg overflow-hidden">
             <img
-              src="/plenum_icon_192x192.png" // mantém o arquivo do ícone
+              src="/plenum_icon_192x192.png"
               alt="SegVenc"
               className="w-14 h-14 object-contain"
               onError={(e) => {
@@ -579,8 +531,173 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
   );
 };
 
+// ======================================================
+// SISTEMA DE PRIORIDADE / CORES
+// ======================================================
+
+function getPrioridadeStatus(dias: number | null | undefined) {
+  if (dias === null || dias === undefined || dias === "") {
+    return {
+      label: "Sem informação",
+      bg: "bg-slate-300",
+      text: "text-slate-800",
+      num: "text-slate-500",
+      nivel: 0,
+    };
+  }
+
+  if (dias < 0) {
+    return {
+      label: `Vencido há ${Math.abs(dias)} dia(s)`,
+      bg: "bg-red-600",
+      text: "text-white",
+      num: "text-red-600 font-bold",
+      nivel: 5,
+    };
+  }
+
+  if (dias === 0) {
+    return {
+      label: "Vence hoje",
+      bg: "bg-sky-600",
+      text: "text-white",
+      num: "text-sky-700 font-semibold",
+      nivel: 4,
+    };
+  }
+
+  if (dias <= 7) {
+    return {
+      label: `Alto risco (${dias} dia(s))`,
+      bg: "bg-orange-500",
+      text: "text-white",
+      num: "text-orange-700 font-semibold",
+      nivel: 3,
+    };
+  }
+
+  if (dias <= 15) {
+    return {
+      label: `Médio (${dias} dia(s))`,
+      bg: "bg-yellow-400",
+      text: "text-slate-900",
+      num: "text-yellow-700 font-semibold",
+      nivel: 2,
+    };
+  }
+
+  if (dias <= 30) {
+    return {
+      label: `Baixo (${dias} dia(s))`,
+      bg: "bg-emerald-500",
+      text: "text-white",
+      num: "text-emerald-700 font-semibold",
+      nivel: 1,
+    };
+  }
+
+  return {
+    label: `OK (${dias} dia(s))`,
+    bg: "bg-emerald-200",
+    text: "text-emerald-900",
+    num: "text-emerald-700 font-semibold",
+    nivel: 0,
+  };
+}
+
 // =========================
-// DASHBOARD
+// COMPONENTE: StatCard
+// =========================
+
+type StatCardProps = {
+  title: string;
+  value: number | string;
+  subtitle?: string;
+  color?: string; // "red" | "orange" | "yellow" | "sky" | "emerald" | "blue"
+};
+
+const colorStyles: Record<
+  string,
+  { bg: string; text: string; ring: string }
+> = {
+  red: {
+    bg: "bg-red-50",
+    text: "text-red-700",
+    ring: "ring-red-200",
+  },
+  orange: {
+    bg: "bg-orange-50",
+    text: "text-orange-700",
+    ring: "ring-orange-200",
+  },
+  yellow: {
+    bg: "bg-yellow-50",
+    text: "text-yellow-700",
+    ring: "ring-yellow-200",
+  },
+  sky: {
+    bg: "bg-sky-50",
+    text: "text-sky-700",
+    ring: "ring-sky-200",
+  },
+  emerald: {
+    bg: "bg-emerald-50",
+    text: "text-emerald-700",
+    ring: "ring-emerald-200",
+  },
+  blue: {
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    ring: "ring-blue-200",
+  },
+  default: {
+    bg: "bg-slate-50",
+    text: "text-slate-700",
+    ring: "ring-slate-200",
+  },
+};
+
+const StatCard: React.FC<StatCardProps> = ({
+  title,
+  value,
+  subtitle,
+  color = "default",
+}) => {
+  const styles = colorStyles[color] || colorStyles.default;
+
+  return (
+    <div
+      className={classNames(
+        "rounded-3xl p-4 shadow-sm border border-slate-200",
+        "hover:shadow-md transition-all",
+        styles.bg
+      )}
+    >
+      <div className="flex items-baseline justify-between">
+        <h3 className={classNames("text-xs font-semibold", styles.text)}>
+          {title}
+        </h3>
+
+        <span
+          className={classNames(
+            "text-lg font-bold px-3 py-0.5 rounded-full ring-1",
+            styles.text,
+            styles.ring
+          )}
+        >
+          {value}
+        </span>
+      </div>
+
+      {subtitle && (
+        <p className="text-[10px] mt-1 text-slate-500">{subtitle}</p>
+      )}
+    </div>
+  );
+};
+
+// =========================
+// DASHBOARD (OTIMIZADO)
 // =========================
 
 type DashboardProps = {
@@ -603,78 +720,156 @@ const DashboardView: React.FC<DashboardProps> = ({
   onChangeFiltros,
   customFilters,
 }) => {
+  // 1) Pré-cálculo de dias / prioridade (1x só, quando registros mudar)
   const registrosComCalculos = useMemo(() => {
     return registros.map((reg) => {
       const diff = daysUntil(reg.vencimento);
-      const status = statusFromDays(diff);
-      return { ...reg, qtdeDias: diff, status };
+      const prioridade = getPrioridadeStatus(diff);
+
+      return {
+        ...reg,
+        qtdeDias: diff,
+        prioridadeNivel: prioridade.nivel,
+        prioridadeInfo: prioridade,
+      };
     });
   }, [registros]);
 
-  const setores = Array.from(
-    new Set(colaboradores.map((c) => c.setor).filter(Boolean))
-  ).sort();
+  // 2) Listas de Setor / Função (memoizadas por colaboradores)
+  const { setores, funcoes } = useMemo(() => {
+    const setoresSet = new Set<string>();
+    const funcoesSet = new Set<string>();
 
-  const funcoes = Array.from(
-    new Set(colaboradores.map((c) => c.funcao).filter(Boolean))
-  ).sort();
+    colaboradores.forEach((c) => {
+      if (c.setor) setoresSet.add(c.setor);
+      if (c.funcao) funcoesSet.add(c.funcao);
+    });
 
-  const cursosExames = Array.from(
-    new Set(registros.map((r) => r.cursoExame).filter(Boolean))
-  ).sort();
+    return {
+      setores: Array.from(setoresSet).sort(),
+      funcoes: Array.from(funcoesSet).sort(),
+    };
+  }, [colaboradores]);
 
-  const filtered = registrosComCalculos.filter((reg) => {
-    if (filtrosDashboard.setor && reg.setor !== filtrosDashboard.setor) {
-      return false;
-    }
-    if (filtrosDashboard.funcao && reg.funcao !== filtrosDashboard.funcao) {
-      return false;
-    }
-    if (filtrosDashboard.tipo && reg.cursoExame !== filtrosDashboard.tipo) {
-      return false;
-    }
+  // 3) Lista de cursos/exames (memoizada por registros)
+  const cursosExames = useMemo(() => {
+    const set = new Set<string>();
+    registros.forEach((r) => {
+      if (r.cursoExame) set.add(r.cursoExame);
+    });
+    return Array.from(set).sort();
+  }, [registros]);
 
-    for (const cf of customFilters.filter((c) => c.usarNoDashboard)) {
-      const val = filtrosDashboard.custom[cf.id];
-      if (!val) continue;
-      const regVal = (reg as any)[cf.nome];
-      if (
-        regVal === undefined ||
-        String(regVal).toLowerCase() !== val.toLowerCase()
-      ) {
-        return false;
+  // 4) Filtragem + contadores em UMA passada só
+  const { filtered, ordered, stats } = useMemo(() => {
+    const filtrados: (Registro & {
+      qtdeDias?: number;
+      prioridadeNivel?: number;
+      prioridadeInfo?: ReturnType<typeof getPrioridadeStatus>;
+    })[] = [];
+
+    let total = 0;
+    let vencidos = 0;
+    let venceHoje = 0;
+    let riscoAlto = 0;   // 1–7 dias
+    let riscoMedio = 0;  // 8–15 dias
+    let riscoBaixo = 0;  // 16–30 dias
+    let ok = 0;          // >30 dias
+
+    outer: for (const reg of registrosComCalculos) {
+      // Filtro Setor
+      if (filtrosDashboard.setor && reg.setor !== filtrosDashboard.setor) {
+        continue;
+      }
+
+      // Filtro Função
+      if (filtrosDashboard.funcao && reg.funcao !== filtrosDashboard.funcao) {
+        continue;
+      }
+
+      // Filtro Curso/Exame
+      if (filtrosDashboard.tipo && reg.cursoExame !== filtrosDashboard.tipo) {
+        continue;
+      }
+
+      // Filtros custom
+      for (const cf of customFilters.filter((c) => c.usarNoDashboard)) {
+        const valFiltro = filtrosDashboard.custom[cf.id];
+        if (!valFiltro) continue;
+
+        const valReg = (reg as any)[cf.nome];
+        if (
+          valReg === undefined ||
+          String(valReg).toLowerCase() !== valFiltro.toLowerCase()
+        ) {
+          continue outer;
+        }
+      }
+
+      // Passou em todos os filtros
+      filtrados.push(reg);
+      total++;
+
+      const dias = reg.qtdeDias ?? 0;
+
+      if (dias < 0) {
+        vencidos++;
+      } else if (dias === 0) {
+        venceHoje++;
+      } else if (dias <= 7) {
+        riscoAlto++;
+      } else if (dias <= 15) {
+        riscoMedio++;
+      } else if (dias <= 30) {
+        riscoBaixo++;
+      } else {
+        ok++;
       }
     }
 
-    return true;
-  });
+    const orderedLocal = [...filtrados].sort(
+      (a, b) => (b.prioridadeNivel ?? 0) - (a.prioridadeNivel ?? 0)
+    );
 
-  const ordered = [...filtered].sort((a, b) => {
-    const da = (a as any).qtdeDias ?? daysUntil(a.vencimento);
-    const db = (b as any).qtdeDias ?? daysUntil(b.vencimento);
-    return da - db;
-  });
+    return {
+      filtered: filtrados,
+      ordered: orderedLocal,
+      stats: {
+        total,
+        vencidos,
+        venceHoje,
+        riscoAlto,
+        riscoMedio,
+        riscoBaixo,
+        ok,
+      },
+    };
+  }, [registrosComCalculos, filtrosDashboard, customFilters]);
 
-  const total = filtered.length;
-  const vencidos = filtered.filter((r) => r.status === "Vencido").length;
-  const vence30 = filtered.filter((r) => r.status === "Vence em 30 dias").length;
-  const ok = filtered.filter((r) => r.status === "Ok").length;
+  const {
+    total,
+    vencidos,
+    venceHoje,
+    riscoAlto,
+    riscoMedio,
+    riscoBaixo,
+    ok,
+  } = stats;
 
+  // 5) Render
   return (
     <div className="space-y-6">
-      {/* Filtros globais */}
+      {/* FILTROS SUPERIORES */}
       <div className="flex flex-wrap gap-3 items-end">
+        {/* SETOR */}
         <div className="space-y-1 text-xs">
           <label className="block font-semibold text-slate-600">Setor</label>
           <select
             value={filtrosDashboard.setor}
             onChange={(e) =>
-              onChangeFiltros({
-                ...filtrosDashboard,
-                setor: e.target.value,
-              })
+              onChangeFiltros({ ...filtrosDashboard, setor: e.target.value })
             }
-            className="min-w-[160px] rounded-2xl border border-slate-300 px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-500 text-xs bg-white"
+            className="min-w-[150px] rounded-2xl border border-slate-300 px-3 py-1.5 bg-white text-xs focus:ring-2 focus:ring-sky-500"
           >
             <option value="">Todos</option>
             {setores.map((s) => (
@@ -685,17 +880,15 @@ const DashboardView: React.FC<DashboardProps> = ({
           </select>
         </div>
 
+        {/* FUNÇÃO */}
         <div className="space-y-1 text-xs">
           <label className="block font-semibold text-slate-600">Função</label>
           <select
             value={filtrosDashboard.funcao}
             onChange={(e) =>
-              onChangeFiltros({
-                ...filtrosDashboard,
-                funcao: e.target.value,
-              })
+              onChangeFiltros({ ...filtrosDashboard, funcao: e.target.value })
             }
-            className="min-w-[160px] rounded-2xl border border-slate-300 px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-500 text-xs bg-white"
+            className="min-w-[150px] rounded-2xl border border-slate-300 px-3 py-1.5 bg-white text-xs focus:ring-2 focus:ring-sky-500"
           >
             <option value="">Todas</option>
             {funcoes.map((f) => (
@@ -706,7 +899,7 @@ const DashboardView: React.FC<DashboardProps> = ({
           </select>
         </div>
 
-        {/* Filtro por nome do Curso/Exame */}
+        {/* CURSO/EXAME */}
         <div className="space-y-1 text-xs">
           <label className="block font-semibold text-slate-600">
             Curso/Exame
@@ -714,12 +907,9 @@ const DashboardView: React.FC<DashboardProps> = ({
           <select
             value={filtrosDashboard.tipo}
             onChange={(e) =>
-              onChangeFiltros({
-                ...filtrosDashboard,
-                tipo: e.target.value,
-              })
+              onChangeFiltros({ ...filtrosDashboard, tipo: e.target.value })
             }
-            className="min-w-[160px] rounded-2xl border border-slate-300 px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-500 text-xs bg-white"
+            className="min-w-[150px] rounded-2xl border border-slate-300 px-3 py-1.5 bg-white text-xs focus:ring-2 focus:ring-sky-500"
           >
             <option value="">Todos</option>
             {cursosExames.map((c) => (
@@ -730,6 +920,7 @@ const DashboardView: React.FC<DashboardProps> = ({
           </select>
         </div>
 
+        {/* CAMPOS CUSTOM */}
         {customFilters
           .filter((c) => c.usarNoDashboard)
           .map((cf) => (
@@ -749,46 +940,71 @@ const DashboardView: React.FC<DashboardProps> = ({
                     },
                   })
                 }
-                className="min-w-[160px] rounded-2xl border border-slate-300 px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-500 text-xs bg-white"
+                className="min-w-[150px] rounded-2xl border border-slate-300 px-3 py-1.5 bg-white text-xs focus:ring-2 focus:ring-sky-500"
                 placeholder={`Filtrar por ${cf.nome}`}
               />
             </div>
           ))}
       </div>
 
-      {/* Cards */}
+      {/* CARDS DE PRIORIDADE */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard
-          title="Total monitorados"
-          value={total}
-          subtitle="Registros de exames e cursos sob gestão."
-          color="blue"
-        />
         <StatCard
           title="Vencidos"
           value={vencidos}
-          subtitle="Tire da operação urgente!"
+          subtitle="Ação imediata"
           color="red"
         />
+
         <StatCard
-          title="Vence em 30 dias ou menos"
-          value={vence30}
-          subtitle="Programe a atualização!"
-          color="amber"
+          title="Vence hoje"
+          value={venceHoje}
+          subtitle="Prioridade máxima"
+          color="sky"
         />
+
         <StatCard
-          title="OK"
+          title="Risco alto (≤ 7 dias)"
+          value={riscoAlto}
+          subtitle="Planejar urgente"
+          color="orange"
+        />
+
+        <StatCard
+          title="Risco médio (≤ 15 dias)"
+          value={riscoMedio}
+          subtitle="Atenção necessária"
+          color="yellow"
+        />
+
+        <StatCard
+          title="Risco baixo (≤ 30 dias)"
+          value={riscoBaixo}
+          subtitle="Monitorar"
+          color="emerald"
+        />
+
+        <StatCard
+          title="OK (> 30 dias)"
           value={ok}
-          subtitle="Parabéns, em dia!"
+          subtitle="Sem riscos próximos"
           color="green"
+        />
+
+        <StatCard
+          title="Total monitorados"
+          value={total}
+          subtitle="Registros ativos"
+          color="blue"
         />
       </div>
 
-      {/* Tabela resumo */}
+      {/* TABELA PRINCIPAL */}
       <div className="space-y-2">
         <h3 className="text-sm font-semibold text-slate-700">
           Resumo por colaborador
         </h3>
+
         <div className="border border-slate-200 rounded-3xl overflow-hidden bg-white">
           <table className="w-full text-xs">
             <thead className="bg-slate-50 text-slate-600">
@@ -805,12 +1021,11 @@ const DashboardView: React.FC<DashboardProps> = ({
                 <th className="px-3 py-2 text-left font-semibold">Status</th>
               </tr>
             </thead>
+
             <tbody>
               {ordered.map((reg) => {
-                const qtdeDias =
-                  reg.qtdeDias ?? daysUntil(reg.vencimento);
-                const status =
-                  reg.status ?? statusFromDays(qtdeDias);
+                const dias = reg.qtdeDias ?? 0;
+                const prioridade = reg.prioridadeInfo ?? getPrioridadeStatus(dias);
 
                 return (
                   <tr
@@ -821,30 +1036,22 @@ const DashboardView: React.FC<DashboardProps> = ({
                     <td className="px-3 py-2">{reg.colaboradorNome}</td>
                     <td className="px-3 py-2">{reg.funcao}</td>
                     <td className="px-3 py-2">{reg.setor}</td>
-                    <td
-                      className={classNames(
-                        "px-3 py-2 font-medium",
-                        qtdeDias < 0
-                          ? "text-rose-600"
-                          : qtdeDias <= 30
-                          ? "text-amber-700"
-                          : "text-emerald-700"
-                      )}
-                    >
-                      {qtdeDias}
+
+                    {/* QTDE DIAS COM COR */}
+                    <td className="px-3 py-2 font-medium">
+                      <span className={prioridade.num}>{dias}</span>
                     </td>
+
+                    {/* BADGE STATUS */}
                     <td className="px-3 py-2">
                       <span
                         className={classNames(
                           "inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-semibold",
-                          statusChipClasses(status)
+                          prioridade.bg,
+                          prioridade.text
                         )}
                       >
-                        {status === "Vencido"
-                          ? "Vencido"
-                          : status === "Vence em 30 dias"
-                          ? "Vence em 30 dias ou menos"
-                          : "OK"}
+                        {prioridade.label}
                       </span>
                     </td>
                   </tr>
@@ -890,7 +1097,9 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
 }) => {
   const [statusFiltro, setStatusFiltro] = useState<string>("");
   const [tipoFiltro, setTipoFiltro] = useState<string>("");
-  const [filtrosCustom, setFiltrosCustom] = useState<Record<string, string>>({});
+  const [filtrosCustom, setFiltrosCustom] = useState<Record<string, string>>(
+    {}
+  );
   const [extraCols, setExtraCols] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -920,9 +1129,9 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
     setRegistros(
       registros.map((r) => {
         if (r.id !== id) return r;
+
         let updated: Registro = { ...r, [field]: value };
 
-        // Auto-preenchimento pela matrícula
         if (field === "matricula") {
           const colab = colaboradores.find((c) => c.matricula === value);
           if (colab) {
@@ -937,7 +1146,6 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
           }
         }
 
-        // Cálculo automático do vencimento
         if (
           field === "dataUltimoEvento" ||
           field === "cursoExame" ||
@@ -956,6 +1164,12 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
             updated.qtdeDias = diff;
             updated.status = statusFromDays(diff);
           }
+        }
+
+        if (field === "vencimento" && updated.vencimento) {
+          const diff = daysUntil(updated.vencimento);
+          updated.qtdeDias = diff;
+          updated.status = statusFromDays(diff);
         }
 
         return updated;
@@ -1002,7 +1216,6 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
     );
   };
 
-  // IMPORTAÇÃO CSV
   const handleImportClick = () => {
     fileInputRef.current?.click();
   };
@@ -1011,6 +1224,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
+
     reader.onload = () => {
       const text = String(reader.result ?? "");
       const matrix = parseCsv(text);
@@ -1035,6 +1249,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
             id: Date.now() + idx,
             tipo: "Exame",
           };
+
           Object.entries(indexToKey).forEach(([idxStr, key]) => {
             const i = Number(idxStr);
             base[key] = cells[i] ?? "";
@@ -1052,6 +1267,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
       setRegistros(imported);
       e.target.value = "";
     };
+
     reader.readAsText(file, "utf-8");
   };
 
@@ -1103,7 +1319,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
           <select
             value={statusFiltro}
             onChange={(e) => setStatusFiltro(e.target.value)}
-            className="rounded-2xl border border-slate-300 px-3 py-1.5 text-xs min-w-[180px] focus:outline-none focus:ring-2 focus:ring-sky-500"
+            className="rounded-2xl border border-slate-300 px-3 py-1.5 text-xs min-w-[180px] focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
           >
             <option value="">Todos</option>
             <option value="Vencidos">Vencidos</option>
@@ -1121,7 +1337,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
           <select
             value={tipoFiltro}
             onChange={(e) => setTipoFiltro(e.target.value)}
-            className="rounded-2xl border border-slate-300 px-3 py-1.5 text-xs min-w-[140px] focus:outline-none focus:ring-2 focus:ring-sky-500"
+            className="rounded-2xl border border-slate-300 px-3 py-1.5 text-xs min-w-[140px] focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
           >
             <option value="">Todos</option>
             <option value="Exame">Exame</option>
@@ -1145,7 +1361,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
                     [cf.id]: e.target.value,
                   })
                 }
-                className="rounded-2xl border border-slate-300 px-3 py-1.5 text-xs min-w-[160px] focus:outline-none focus:ring-2 focus:ring-sky-500"
+                className="rounded-2xl border border-slate-300 px-3 py-1.5 text-xs min-w-[160px] focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
                 placeholder={`Filtrar por ${cf.nome}`}
               />
             </div>
@@ -1203,9 +1419,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
         <table className="w-full text-xs min-w-[1100px]">
           <thead className="bg-slate-50 text-slate-600">
             <tr>
-              <th className="px-3 py-2 text-left font-semibold">
-                Matrícula
-              </th>
+              <th className="px-3 py-2 text-left font-semibold">Matrícula</th>
               <th className="px-3 py-2 text-left font-semibold">
                 Colaborador
               </th>
@@ -1252,7 +1466,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
           <tbody>
             {registrosFiltrados.map((reg) => {
               const diff = daysUntil(reg.vencimento);
-              const status = statusFromDays(diff);
+              const prioridade = getPrioridadeStatus(diff);
 
               return (
                 <tr
@@ -1383,18 +1597,29 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
                       }
                     />
                   </td>
+
+                  {/* QTDE DIAS COM COR POR PRIORIDADE */}
                   <td className="px-3 py-1.5">
                     <span
                       className={classNames(
                         "inline-flex items-center px-2 py-1 rounded-full text-[10px] font-semibold",
-                        statusChipClasses(status)
+                        prioridade.num
                       )}
                     >
-                      {status === "Vencido"
-                        ? "Vencido"
-                        : status === "Vence em 30 dias"
-                        ? "Vence em 30 dias ou menos"
-                        : "OK"}
+                      {diff}
+                    </span>
+                  </td>
+
+                  {/* STATUS / PRIORIDADE VISUAL */}
+                  <td className="px-3 py-1.5">
+                    <span
+                      className={classNames(
+                        "inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-semibold",
+                        prioridade.bg,
+                        prioridade.text
+                      )}
+                    >
+                      {prioridade.label}
                     </span>
                   </td>
 
@@ -1404,11 +1629,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
                         className="w-full border border-slate-200 bg-transparent rounded-lg px-2 py-1"
                         value={(reg as any)[colName] || ""}
                         onChange={(e) =>
-                          atualizarRegistro(
-                            reg.id,
-                            colName,
-                            e.target.value
-                          )
+                          atualizarRegistro(reg.id, colName, e.target.value)
                         }
                       />
                     </td>
@@ -1450,6 +1671,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
 type ColaboradoresViewProps = {
   colaboradores: Colaborador[];
   setColaboradores: (rows: Colaborador[]) => void;
+  customFilters?: CustomFilter[]; // para compatibilidade com chamada
 };
 
 const ColaboradoresView: React.FC<ColaboradoresViewProps> = ({
@@ -1477,9 +1699,7 @@ const ColaboradoresView: React.FC<ColaboradoresViewProps> = ({
 
   const atualizarColaborador = (id: number, field: string, value: any) => {
     setColaboradores(
-      colaboradores.map((c) =>
-        c.id === id ? { ...c, [field]: value } : c
-      )
+      colaboradores.map((c) => (c.id === id ? { ...c, [field]: value } : c))
     );
   };
 
@@ -1518,7 +1738,6 @@ const ColaboradoresView: React.FC<ColaboradoresViewProps> = ({
     );
   };
 
-  // IMPORTAÇÃO CSV
   const handleImportClick = () => {
     fileInputRef.current?.click();
   };
@@ -1791,9 +2010,7 @@ const ExamesView: React.FC<ExamesViewProps> = ({ exames, setExames }) => {
 
   const atualizar = (id: number, field: keyof ExameCurso, value: any) => {
     setExames(
-      exames.map((e) =>
-        e.id === id ? { ...e, [field]: value } : e
-      )
+      exames.map((e) => (e.id === id ? { ...e, [field]: value } : e))
     );
   };
 
@@ -1930,9 +2147,7 @@ const CamposFiltrosView: React.FC<CamposFiltrosViewProps> = ({
 
   const atualizarCampo = (id: string, patch: Partial<CustomFilter>) => {
     setCustomFilters(
-      customFilters.map((c) =>
-        c.id === id ? { ...c, ...patch } : c
-      )
+      customFilters.map((c) => (c.id === id ? { ...c, ...patch } : c))
     );
   };
 
@@ -2162,7 +2377,9 @@ const UsuariosView: React.FC<UsuariosViewProps> = ({
                     </td>
                     <td className="px-3 py-2 text-xs">
                       <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">
-                        {u.role === "admin" ? "Gerencia acessos" : "Acesso comum"}
+                        {u.role === "admin"
+                          ? "Gerencia acessos"
+                          : "Acesso comum"}
                       </span>
                     </td>
                   </tr>
@@ -2177,17 +2394,265 @@ const UsuariosView: React.FC<UsuariosViewProps> = ({
 };
 
 // =========================
+// TELA EMPRESA / CONFIGURAÇÕES
+// =========================
+
+type EmpresaViewProps = {
+  empresaId: string | null;
+};
+
+const EmpresaView: React.FC<EmpresaViewProps> = ({ empresaId }) => {
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [testLoading, setTestLoading] = useState(false);
+
+  const [nome, setNome] = useState("");
+  const [cnpj, setCnpj] = useState("");
+  const [emailNotificacao, setEmailNotificacao] = useState("");
+
+  const [mensagem, setMensagem] = useState<string | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  // Carrega dados da empresa ao entrar na aba
+  useEffect(() => {
+    if (!empresaId) return;
+
+    const loadEmpresa = async () => {
+      setLoading(true);
+      setErro(null);
+      setMensagem(null);
+
+      try {
+        const { data, error } = await supabase
+          .from("empresas")
+          .select("id, nome, cnpj, email_notificacao")
+          .eq("id", empresaId)
+          .maybeSingle();
+
+        if (error) {
+          console.error("Erro ao carregar empresa:", error);
+          setErro("Não foi possível carregar os dados da empresa.");
+          return;
+        }
+
+        if (data) {
+          setNome(data.nome ?? "");
+          setCnpj(data.cnpj ?? "");
+          setEmailNotificacao(data.email_notificacao ?? "");
+        }
+      } catch (err) {
+        console.error("Erro inesperado ao carregar empresa:", err);
+        setErro("Erro inesperado ao carregar os dados da empresa.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadEmpresa();
+  }, [empresaId]);
+
+  const handleSave = async () => {
+    if (!empresaId) {
+      setErro("Empresa não definida. Faça login novamente.");
+      return;
+    }
+
+    setSaving(true);
+    setErro(null);
+    setMensagem(null);
+
+    try {
+      const { error } = await supabase
+        .from("empresas")
+        .update({
+          nome,
+          cnpj,
+          email_notificacao: emailNotificacao,
+        })
+        .eq("id", empresaId);
+
+      if (error) {
+        console.error("Erro ao salvar empresa:", error);
+        setErro("Não foi possível salvar os dados da empresa.");
+        return;
+      }
+
+      setMensagem("Dados da empresa atualizados com sucesso.");
+    } catch (err) {
+      console.error("Erro inesperado ao salvar empresa:", err);
+      setErro("Erro inesperado ao salvar os dados da empresa.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Chama Edge Function para enviar e-mail de teste
+  const handleSendTestEmail = async () => {
+    if (!empresaId) {
+      setErro("Empresa não definida. Faça login novamente.");
+      return;
+    }
+    if (!emailNotificacao) {
+      setErro("Informe um e-mail de notificações antes de enviar o teste.");
+      return;
+    }
+
+    setTestLoading(true);
+    setErro(null);
+    setMensagem(null);
+
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        "segvenc-alertas-email",
+        {
+          body: {
+            empresaId,
+            modo: "teste",
+          },
+        }
+      );
+
+      if (error) {
+        console.error("Erro ao chamar função de teste:", error);
+        setErro("Não foi possível enviar o e-mail de teste.");
+        return;
+      }
+
+      if (data?.error) {
+        console.error("Erro retornado pela função:", data.error);
+        setErro(data.error as string);
+        return;
+      }
+
+      setMensagem(
+        "E-mail de teste enviado. Verifique a caixa de entrada ou spam do endereço configurado."
+      );
+    } catch (err) {
+      console.error("Erro inesperado ao enviar e-mail de teste:", err);
+      setErro("Erro inesperado ao enviar o e-mail de teste.");
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  if (!empresaId) {
+    return (
+      <div className="text-xs text-slate-500">
+        Empresa não identificada. Faça login novamente.
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      {/* Título + descrição */}
+      <div className="space-y-1">
+        <h2 className="text-sm font-semibold text-slate-800">
+          Dados da empresa
+        </h2>
+        <p className="text-xs text-slate-500 max-w-xl">
+          Ajuste as informações principais da sua empresa. O nome aparece no
+          ambiente SegVenc e será usado em relatórios e notificações futuras.
+        </p>
+      </div>
+
+      {/* Alertas */}
+      {erro && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
+          {erro}
+        </div>
+      )}
+
+      {mensagem && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700">
+          {mensagem}
+        </div>
+      )}
+
+      {/* Card com formulário */}
+      <div className="bg-white border border-slate-200 rounded-3xl px-4 py-4 space-y-4">
+        <div className="space-y-1 text-xs">
+          <label className="font-semibold text-slate-700">
+            Nome da empresa
+          </label>
+          <input
+            type="text"
+            value={nome}
+            onChange={(e) => setNome(e.target.value)}
+            className="w-full rounded-2xl border border-slate-300 px-3 py-1.5 text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500"
+            placeholder="Ex.: CGB - Distribuição de Energia"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1 text-xs">
+            <label className="font-semibold text-slate-700">
+              CNPJ (visual, por enquanto)
+            </label>
+            <input
+              type="text"
+              value={cnpj}
+              onChange={(e) => setCnpj(e.target.value)}
+              className="w-full rounded-2xl border border-slate-300 px-3 py-1.5 text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500"
+              placeholder="00.000.000/0000-00"
+            />
+          </div>
+
+          <div className="space-y-1 text-xs">
+            <label className="font-semibold text-slate-700">
+              E-mail para notificações
+            </label>
+            <input
+              type="email"
+              value={emailNotificacao}
+              onChange={(e) => setEmailNotificacao(e.target.value)}
+              className="w-full rounded-2xl border border-slate-300 px-3 py-1.5 text-xs bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500"
+              placeholder="seguranca@empresa.com.br"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between pt-2 gap-3 flex-wrap">
+          <span className="text-[11px] text-slate-400">
+            ID da empresa:{" "}
+            <span className="font-mono text-slate-500">{empresaId}</span>
+          </span>
+
+          <div className="flex gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={handleSendTestEmail}
+              disabled={testLoading || loading}
+              className="rounded-full bg-sky-600 text-white px-4 py-1.5 text-[11px] font-semibold shadow hover:bg-sky-700 disabled:opacity-60"
+            >
+              {testLoading ? "Enviando teste..." : "Enviar e-mail de teste"}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || loading}
+              className="rounded-full bg-emerald-600 text-white px-4 py-1.5 text-[11px] font-semibold shadow hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {saving ? "Salvando..." : "Salvar dados da empresa"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// =========================
 // APP PRINCIPAL
 // =========================
 
 const App: React.FC = () => {
-  // 👤 sessão / empresa / loading inicial
   const [session, setSession] = useState<Session | null>(null);
   const [empresaId, setEmpresaId] = useState<string | null>(null);
   const [loadingInitialData, setLoadingInitialData] =
     useState<boolean>(false);
 
-  // 📊 estados principais
   const [currentTab, setCurrentTab] = useState<TabKey>("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -2206,8 +2671,7 @@ const App: React.FC = () => {
     []
   );
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
-
-    const [saving, setSaving] = useState<boolean>(false);
+  const [saving, setSaving] = useState<boolean>(false);
 
   // =========================
   // Salvar dados no Supabase
@@ -2283,8 +2747,7 @@ const App: React.FC = () => {
       data_admissao: r.dataAdmissao || null,
       data_ultimo_evento: r.dataUltimoEvento || null,
       vencimento: r.vencimento || null,
-      qtde_dias:
-        typeof r.qtdeDias === "number" ? r.qtdeDias : null,
+      qtde_dias: typeof r.qtdeDias === "number" ? r.qtdeDias : null,
       status: r.status ?? null,
     }));
 
@@ -2346,8 +2809,6 @@ const App: React.FC = () => {
     }
   };
 
-
-
   // =========================
   // Logout
   // =========================
@@ -2363,12 +2824,10 @@ const App: React.FC = () => {
   // =====================
 
   useEffect(() => {
-    // sessão atual
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session ?? null);
     });
 
-    // mudanças de sessão
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, newSession) => {
@@ -2396,15 +2855,25 @@ const App: React.FC = () => {
           .from("usuarios")
           .select("empresa_id, role")
           .eq("auth_user_id", session.user.id)
-          .single();
+          .maybeSingle();
 
-        if (userError || !usuario) {
+        if (userError) {
           console.error("Erro ao buscar usuario/empresa:", userError);
           setLoadingInitialData(false);
           return;
         }
 
+        if (!usuario || !usuario.empresa_id) {
+          console.error(
+            "Usuário logado não tem empresa_id vinculado na tabela 'usuarios'."
+          );
+          setLoadingInitialData(false);
+          return;
+        }
+
         const empId = usuario.empresa_id as string;
+
+        // 🔹 garante que o estado de empresa e role sejam preenchidos
         setEmpresaId(empId);
         setIsAdmin(usuario.role === "admin");
 
@@ -2592,98 +3061,102 @@ const App: React.FC = () => {
         </div>
       </header>
 
-       {/* CONTEÚDO PRINCIPAL */}
-  <main className="max-w-6xl mx-auto px-4 py-4 w-full flex-1">
-    {/* Abas */}
-    <div className="flex gap-2 mb-4">
-      {(
-        [
-          ["dashboard", "Dashboard"],
-          ["registros", "Registros"],
-          ["colaboradores", "Colaboradores"],
-          ["exames", "Exames/Cursos"],
-          ["campos", "Campos & Filtros"],
-          ["usuarios", "Usuários"],
-        ] as [TabKey, string][]
-      ).map(([key, label]) => (
-        <button
-          key={key}
-          type="button"
-          onClick={() => setCurrentTab(key)}
-          className={classNames(
-            "px-3 py-1.5 rounded-full text-xs font-semibold border",
-            currentTab === key
-              ? "bg-sky-600 text-white border-sky-600 shadow"
-              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-          )}
-        >
-          {label}
-        </button>
-      ))}
+      {/* CONTEÚDO PRINCIPAL */}
+      <main className="max-w-6xl mx-auto px-4 py-4 w-full flex-1">
+        {/* Abas */}
+        <div className="flex gap-2 mb-4 flex-wrap">
+          {(
+            [
+              ["dashboard", "Dashboard"],
+              ["registros", "Registros"],
+              ["colaboradores", "Colaboradores"],
+              ["exames", "Exames/Cursos"],
+              ["campos", "Campos & Filtros"],
+              ["usuarios", "Usuários"],
+              ["empresa", "Empresa"], // 👈 nova aba
+            ] as [TabKey, string][]
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setCurrentTab(key)}
+              className={classNames(
+                "px-3 py-1.5 rounded-full text-xs font-semibold border",
+                currentTab === key
+                  ? "bg-sky-600 text-white border-sky-600 shadow"
+                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Botão salvar dados (colaboradores/registros/exames/campos) */}
+        <div className="flex justify-end mb-3">
+          <button
+            type="button"
+            onClick={salvarTudo}
+            disabled={saving || !empresaId}
+            className="rounded-full bg-emerald-600 text-white px-4 py-1.5 text-[11px] font-semibold shadow hover:bg-emerald-700 disabled:opacity-60"
+          >
+            {saving ? "Salvando dados..." : "Salvar dados da empresa"}
+          </button>
+        </div>
+
+        {/* Views */}
+        {currentTab === "dashboard" && (
+          <DashboardView
+            registros={registros}
+            colaboradores={colaboradores}
+            filtrosDashboard={filtrosDashboard}
+            onChangeFiltros={setFiltrosDashboard}
+            customFilters={customFilters}
+          />
+        )}
+
+        {currentTab === "registros" && (
+          <RegistrosView
+            registros={registros}
+            setRegistros={setRegistros}
+            colaboradores={colaboradores}
+            customFilters={customFilters}
+            exames={exames}
+          />
+        )}
+
+        {currentTab === "colaboradores" && (
+          <ColaboradoresView
+            colaboradores={colaboradores}
+            setColaboradores={setColaboradores}
+            customFilters={customFilters}
+          />
+        )}
+
+        {currentTab === "exames" && (
+          <ExamesView exames={exames} setExames={setExames} />
+        )}
+
+        {currentTab === "campos" && (
+          <CamposFiltrosView
+            customFilters={customFilters}
+            setCustomFilters={setCustomFilters}
+          />
+        )}
+
+        {currentTab === "usuarios" && (
+          <UsuariosView
+            usuarios={usuariosInternos}
+            currentUserId={session.user.id}
+            isAdmin={isAdmin}
+            onChangeRole={handleChangeUserRole}
+          />
+        )}
+
+        {currentTab === "empresa" && <EmpresaView empresaId={empresaId} />}
+      </main>
     </div>
-
-    {/* Botão salvar dados */}
-    <div className="flex justify-end mb-3">
-      <button
-        type="button"
-        onClick={salvarTudo}
-        disabled={saving || !empresaId}
-        className="rounded-full bg-emerald-600 text-white px-4 py-1.5 text-[11px] font-semibold shadow hover:bg-emerald-700 disabled:opacity-60"
-      >
-        {saving ? "Salvando dados..." : "Salvar dados da empresa"}
-      </button>
-    </div>
-
-    {/* Views */}
-    {currentTab === "dashboard" && (
-      <DashboardView
-        registros={registros}
-        colaboradores={colaboradores}
-        filtrosDashboard={filtrosDashboard}
-        onChangeFiltros={setFiltrosDashboard}
-        customFilters={customFilters}
-      />
-    )}
-
-    {currentTab === "registros" && (
-      <RegistrosView
-        registros={registros}
-        setRegistros={setRegistros}
-        colaboradores={colaboradores}
-        customFilters={customFilters}
-        exames={exames}
-      />
-    )}
-
-    {currentTab === "colaboradores" && (
-      <ColaboradoresView
-        colaboradores={colaboradores}
-        setColaboradores={setColaboradores}
-      />
-    )}
-
-    {currentTab === "exames" && (
-      <ExamesView exames={exames} setExames={setExames} />
-    )}
-
-    {currentTab === "campos" && (
-      <CamposFiltrosView
-        customFilters={customFilters}
-        setCustomFilters={setCustomFilters}
-      />
-    )}
-
-    {currentTab === "usuarios" && (
-      <UsuariosView
-        usuarios={usuariosInternos}
-        currentUserId={session.user.id}
-        isAdmin={isAdmin}
-        onChangeRole={handleChangeUserRole}
-      />
-    )}
-  </main>
-</div>
-);
-};   // <-- fecha o componente App
+  );
+};
 
 export default App;
