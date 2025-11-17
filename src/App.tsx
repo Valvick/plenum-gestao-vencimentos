@@ -50,8 +50,10 @@ export type Registro = {
   vencimento: string;
   status?: StatusRegistro;
   qtdeDias?: number;
+  linkCertificado?: string; // 👈 novo campo
   [key: string]: any;
 };
+
 
 export type ExameCurso = {
   id: number;
@@ -224,6 +226,7 @@ type DbRegistro = {
   vencimento: string | null;
   qtde_dias: number | null;
   status: string | null;
+  link_certificado: string | null; // 👈 novo
 };
 
 type DbCustomFilter = {
@@ -279,8 +282,10 @@ function mapRegistroFromDb(row: DbRegistro): Registro {
     vencimento: row.vencimento ?? "",
     qtdeDias: row.qtde_dias ?? undefined,
     status: (row.status as StatusRegistro | null) ?? undefined,
+    linkCertificado: row.link_certificado ?? "", // 👈 novo
   };
 }
+
 
 function mapCustomFilterFromDb(row: DbCustomFilter): CustomFilter {
   return {
@@ -1233,6 +1238,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
     { key: "dataAdmissao", label: "Data Admissão" },
     { key: "dataUltimoEvento", label: "Data Último Evento" },
     { key: "vencimento", label: "Vencimento" },
+    { key: "linkCertificado", label: "Link certificado" }, // 👈 novo
     { key: "qtdeDias", label: "Qtde Dias" },
     { key: "status", label: "Status" },
   ];
@@ -1564,6 +1570,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
                 Qtde Dias
               </th>
               <th className="px-3 py-2 text-left font-semibold">Status</th>
+              <th className="px-3 py-2 text-left font-semibold">Certificado</th> {/* 👈 novo */}
 
               {extraCols.map((col) => (
                 <th key={col} className="px-3 py-2 text-left font-semibold">
@@ -1748,6 +1755,29 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
                     </span>
                   </td>
 
+{/* 👇 NOVO CAMPO: LINK DO CERTIFICADO */}
+<td className="px-3 py-1.5">
+  <div className="flex items-center gap-1">
+    <input
+      className="flex-1 border border-slate-200 bg-transparent rounded-lg px-2 py-1 text-[11px]"
+      value={reg.linkCertificado || ""}
+      onChange={(e) =>
+        atualizarRegistro(reg.id, "linkCertificado", e.target.value)
+      }
+      placeholder="https://... (Drive, OneDrive, etc.)"
+    />
+    {reg.linkCertificado && (
+      <button
+        type="button"
+        className="text-sky-600 text-[11px] font-semibold underline whitespace-nowrap"
+        onClick={() => window.open(reg.linkCertificado!, "_blank")}
+      >
+        Ver
+      </button>
+    )}
+  </div>
+</td>
+
                   {extraCols.map((colName) => (
                     <td key={colName} className="px-3 py-1.5">
                       <input
@@ -1775,7 +1805,7 @@ const RegistrosView: React.FC<RegistrosViewProps> = ({
             {registrosFiltrados.length === 0 && (
               <tr>
                 <td
-                  colSpan={12 + extraCols.length}
+                  colSpan={13 + extraCols.length}
                   className="px-3 py-6 text-center text-slate-400 text-xs"
                 >
                   Nenhum registro encontrado.
@@ -2390,18 +2420,22 @@ type UsuariosViewProps = {
   currentUserId: string;
   isAdmin: boolean;
   onChangeRole: (id: number, newRole: "admin" | "user") => void;
+  onOpenInvite: () => void;
 };
+
 
 const UsuariosView: React.FC<UsuariosViewProps> = ({
   usuarios,
   currentUserId,
   isAdmin,
   onChangeRole,
+  onOpenInvite,
 }) => {
   const isEmpty = usuarios.length === 0;
 
   return (
     <div className="space-y-4">
+      {/* Cabeçalho + botão de convite */}
       <div className="flex justify-between items-start gap-4">
         <div className="space-y-1">
           <h2 className="text-sm font-semibold text-slate-800">
@@ -2417,18 +2451,14 @@ const UsuariosView: React.FC<UsuariosViewProps> = ({
 
         <button
           type="button"
-          onClick={() =>
-            alert(
-              "Em breve: convite de novos usuários por e-mail direto aqui pelo SegVenc."
-            )
-          }
-          className="rounded-full bg-slate-900 text-white px-3 py-1.5 text-[11px] font-semibold shadow hover:bg-slate-800 disabled:opacity-50"
-          disabled={!isAdmin}
+          onClick={onOpenInvite}
+          className="rounded-full bg-sky-600 text-white px-4 py-1.5 text-[11px] font-semibold shadow hover:bg-sky-700"
         >
-          + Convidar usuário (em breve)
+          + Convidar usuário
         </button>
       </div>
 
+      {/* Aviso para não-admin */}
       {!isAdmin && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
           Seu perfil não é administrador. Você pode apenas visualizar os usuários
@@ -2436,6 +2466,7 @@ const UsuariosView: React.FC<UsuariosViewProps> = ({
         </div>
       )}
 
+      {/* Tabela de usuários */}
       <div className="border border-slate-200 rounded-3xl overflow-auto bg-white">
         <table className="w-full text-xs min-w-[520px]">
           <thead className="bg-slate-50 text-slate-600">
@@ -2517,6 +2548,7 @@ const UsuariosView: React.FC<UsuariosViewProps> = ({
     </div>
   );
 };
+
 
 // =========================
 // TELA EMPRESA / CONFIGURAÇÕES
@@ -2797,6 +2829,13 @@ const App: React.FC = () => {
   );
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
+  // Estados do modal de convite de usuário
+const [showInviteModal, setShowInviteModal] = useState(false);
+const [inviteEmail, setInviteEmail] = useState("");
+const [inviteLoading, setInviteLoading] = useState(false);
+const [inviteError, setInviteError] = useState<string | null>(null);
+const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
+
 
   // =========================
   // Salvar dados no Supabase
@@ -2872,8 +2911,10 @@ const App: React.FC = () => {
       data_admissao: r.dataAdmissao || null,
       data_ultimo_evento: r.dataUltimoEvento || null,
       vencimento: r.vencimento || null,
-      qtde_dias: typeof r.qtdeDias === "number" ? r.qtdeDias : null,
+      qtde_dias:
+        typeof r.qtdeDias === "number" ? r.qtdeDias : null,
       status: r.status ?? null,
+      link_certificado: r.linkCertificado || null, // novo campo
     }));
 
     const { error } = await supabase
@@ -2885,6 +2926,7 @@ const App: React.FC = () => {
       throw new Error("Erro ao salvar registros.");
     }
   };
+
 
   const salvarCamposFiltros = async () => {
     if (!empresaId) {
@@ -2910,6 +2952,10 @@ const App: React.FC = () => {
       throw new Error("Erro ao salvar campos/filtros.");
     }
   };
+
+// =========================
+// Convite de usuário (Edge Function invite_user)
+// =========================
 
   const salvarTudo = async () => {
     if (!empresaId) {
@@ -2975,7 +3021,7 @@ useEffect(() => {
     setLoadingInitialData(true);
 
     try {
-      // 1) Buscar usuário na tabela 'usuarios'
+      // 1) Tentar buscar vínculo do usuário com empresa
       const { data: usuario, error: userError } = await supabase
         .from("usuarios")
         .select("id, empresa_id, role")
@@ -2983,17 +3029,18 @@ useEffect(() => {
         .maybeSingle();
 
       let empId: string | null = null;
-      let role: "admin" | "user" = "admin";
+      let role: "admin" | "user" = "user";
 
       if (userError) {
         console.error("Erro ao buscar usuario/empresa:", userError);
       }
 
+      // 1A) Se não existe usuario OU não tem empresa_id -> cria tudo agora
       if (!usuario || !usuario.empresa_id) {
-        // 🔹 Não existe vínculo ainda → cria empresa + linha em 'usuarios'
         const nomeEmpresaPadrao =
           "Empresa de " + (session.user.email ?? "usuário");
 
+        // Cria empresa
         const { data: novaEmpresa, error: empresaError } = await supabase
           .from("empresas")
           .insert({ nome: nomeEmpresaPadrao })
@@ -3001,41 +3048,58 @@ useEffect(() => {
           .single();
 
         if (empresaError || !novaEmpresa) {
-          console.error("Erro ao criar empresa:", empresaError);
+          console.error("Erro ao criar empresa padrão:", empresaError);
           setLoadingInitialData(false);
           return;
         }
 
         empId = String(novaEmpresa.id);
+        role = "admin";
 
-        const { data: novoUsuario, error: usuarioInsertError } = await supabase
-          .from("usuarios")
-          .insert({
-            auth_user_id: session.user.id,
-            empresa_id: empId,
-            nome: session.user.email,
-            role: "admin",
-          })
-          .select("id, empresa_id, role")
-          .single();
+        if (usuario) {
+          // Já existia linha em usuarios, só atualiza empresa_id
+          const { error: updateUserError } = await supabase
+            .from("usuarios")
+            .update({ empresa_id: empId })
+            .eq("id", usuario.id);
 
-        if (usuarioInsertError || !novoUsuario) {
-          console.error(
-            "Erro ao criar usuario vinculado à empresa:",
-            usuarioInsertError
-          );
-          setLoadingInitialData(false);
-          return;
+          if (updateUserError) {
+            console.error(
+              "Erro ao atualizar empresa_id do usuario existente:",
+              updateUserError
+            );
+          }
+        } else {
+          // Não tinha linha em usuarios -> cria agora
+          const { error: insertUserError } = await supabase
+            .from("usuarios")
+            .insert({
+              auth_user_id: session.user.id,
+              empresa_id: empId,
+              nome: session.user.email,
+              role: "admin",
+            });
+
+          if (insertUserError) {
+            console.error(
+              "Erro ao criar registro em usuarios:",
+              insertUserError
+            );
+          }
         }
-
-        role = novoUsuario.role;
       } else {
-        // 🔹 Já existe empresa vinculada
+        // 1B) Já existe tudo certinho
         empId = String(usuario.empresa_id);
-        role = usuario.role as "admin" | "user";
+        role = usuario.role;
       }
 
-      // Agora garantimos que sempre tem empresa_id e role
+      if (!empId) {
+        console.error("Não foi possível determinar empresa_id para o usuário.");
+        setLoadingInitialData(false);
+        return;
+      }
+
+      // Define no estado do app
       setEmpresaId(empId);
       setIsAdmin(role === "admin");
 
@@ -3136,6 +3200,57 @@ useEffect(() => {
     } catch (err) {
       console.error("Erro inesperado ao atualizar usuário:", err);
       alert("Erro inesperado ao atualizar o usuário.");
+    }
+  };
+
+  // ⬇️ COLE AQUI A FUNÇÃO NOVA
+
+  const handleInviteUser = async () => {
+    if (!empresaId) {
+      setInviteError("Empresa não definida. Faça login novamente.");
+      return;
+    }
+
+    if (!inviteEmail.trim()) {
+      setInviteError("Informe o e-mail corporativo do usuário.");
+      return;
+    }
+
+    setInviteError(null);
+    setInviteSuccess(null);
+    setInviteLoading(true);
+
+    try {
+      // chama a Edge Function invite_user pelo client do Supabase
+      const { data, error } = await supabase.functions.invoke("invite_user", {
+        body: {
+          empresa_id: empresaId,
+          email: inviteEmail.trim(),
+        },
+      });
+
+      if (error) {
+        console.error("Erro ao convidar usuário:", error);
+        setInviteError(
+          "Não foi possível enviar o convite. Verifique os dados e tente novamente."
+        );
+        return;
+      }
+
+      if (data?.error) {
+        console.error("Erro retornado pela função:", data.error);
+        setInviteError(data.error as string);
+        return;
+      }
+
+      setInviteSuccess(
+        "Convite enviado com sucesso. O usuário deve verificar o e-mail."
+      );
+    } catch (err) {
+      console.error("Erro inesperado ao convidar usuário:", err);
+      setInviteError("Erro inesperado ao enviar o convite.");
+    } finally {
+      setInviteLoading(false);
     }
   };
 
@@ -3308,16 +3423,75 @@ useEffect(() => {
           />
         )}
 
-        {currentTab === "usuarios" && (
+               {currentTab === "usuarios" && (
           <UsuariosView
             usuarios={usuariosInternos}
             currentUserId={session.user.id}
             isAdmin={isAdmin}
             onChangeRole={handleChangeUserRole}
+            onOpenInvite={() => {
+              setInviteError(null);
+              setInviteSuccess(null);
+              setInviteEmail("");
+              setShowInviteModal(true);
+            }}
           />
         )}
 
+
         {currentTab === "empresa" && <EmpresaView empresaId={empresaId} />}
+      {/* Modal de convite de usuário */}
+        {showInviteModal && (
+          <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
+            <div className="bg-white rounded-3xl shadow-xl px-6 py-5 max-w-sm w-full text-xs">
+              <h2 className="text-sm font-semibold text-slate-900 mb-3">
+                Convidar novo usuário
+              </h2>
+
+              <label className="block text-slate-700 font-semibold mb-1">
+                E-mail corporativo
+              </label>
+              <input
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                className="w-full border border-slate-300 rounded-xl px-3 py-2 mb-3 text-xs"
+                placeholder="usuario@empresa.com"
+              />
+
+              {inviteError && (
+                <div className="text-rose-600 text-xs mb-2">{inviteError}</div>
+              )}
+              {inviteSuccess && (
+                <div className="text-emerald-600 text-xs mb-2">
+                  {inviteSuccess}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  className="px-4 py-1.5 rounded-full border border-slate-300 text-[11px]"
+                  onClick={() => {
+                    setShowInviteModal(false);
+                    setInviteEmail("");
+                    setInviteError(null);
+                    setInviteSuccess(null);
+                  }}
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  className="px-4 py-1.5 rounded-full bg-sky-600 text-white text-[11px]"
+                  disabled={inviteLoading}
+                  onClick={handleInviteUser}
+                >
+                  {inviteLoading ? "Enviando..." : "Enviar convite"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
