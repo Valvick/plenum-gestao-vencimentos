@@ -2,81 +2,76 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Variáveis de ambiente do projeto
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-// URL do seu app (pra onde o usuário vai cair depois de aceitar o convite)
-const APP_URL =
-  Deno.env.get("APP_URL") ?? "https://plenum-gestao-vencimentos.vercel.app";
+const APP_URL = Deno.env.get("APP_URL") ?? "https://app.segvenc.app";
 
 if (!SUPABASE_URL || !SERVICE_ROLE) {
-  throw new Error(
-    "SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não configurados",
-  );
+  throw new Error("SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não configurados");
 }
 
-// Client com SERVICE ROLE (admin)
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-// Helper pra CORS
-function corsResponse(body: string, status = 200) {
-  return new Response(body, {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      // ⬇️ AQUI incluímos o x-client-info e apikey
-      "Access-Control-Allow-Headers":
-        "Content-Type, Authorization, X-Client-Info, apikey, X-Requested-With, Accept",
-    },
-  });
-}
+// CORS p/ funcionar no navegador (localhost, app.segvenc.app, etc.)
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
 serve(async (req) => {
-  // Preflight CORS
+  // Preflight
   if (req.method === "OPTIONS") {
-    return corsResponse("OK", 200);
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
     if (req.method !== "POST") {
-      return corsResponse(
-        JSON.stringify({ error: "Method not allowed" }),
-        405,
-      );
+      return new Response("Method not allowed", {
+        status: 405,
+        headers: corsHeaders,
+      });
     }
 
     const { email, empresa_id, role } = await req.json();
 
     if (!email || !empresa_id) {
-      return corsResponse(
-        JSON.stringify({ error: "Campos obrigatórios: email, empresa_id" }),
-        400,
+      return new Response(
+        JSON.stringify({
+          error: "Campos obrigatórios: email, empresa_id",
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
       );
     }
 
-    // 1) Enviar convite oficial do Supabase Auth
-    const { data: inviteData, error: errInvite } =
+    // 1) Convidar usuário via Auth (envia e-mail de convite)
+    const { data, error: errInvite } =
       await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-        redirectTo: `${APP_URL}/`,
+        redirectTo: `${APP_URL}/`, // para onde o link do e-mail aponta
         data: {
           empresa_id,
           role: role ?? "user",
         },
       });
 
-    if (errInvite || !inviteData?.user) {
-      console.error("Erro ao convidar usuário no Auth:", errInvite);
-      return corsResponse(
+    if (errInvite || !data?.user) {
+      console.error("Erro ao convidar user auth:", errInvite);
+      return new Response(
         JSON.stringify({
           error: errInvite?.message ?? "Erro ao convidar usuário",
         }),
-        500,
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
       );
     }
 
-    const newUser = inviteData.user;
+    const newUser = data.user;
 
     // 2) Inserir na tabela public.usuarios
     const { error: errInsert } = await supabaseAdmin.from("usuarios").insert({
@@ -89,27 +84,39 @@ serve(async (req) => {
 
     if (errInsert) {
       console.error("Erro ao inserir em usuarios:", errInsert);
-      return corsResponse(
+      return new Response(
         JSON.stringify({ error: errInsert.message }),
-        500,
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
       );
     }
 
-    // 3) Retorno OK
-    return corsResponse(
+    // 3) OK
+    return new Response(
       JSON.stringify({
         ok: true,
         message:
-          "Convite enviado com sucesso. O usuário deve verificar o e-mail.",
+          "Convite enviado. Peça para o usuário verificar a caixa de entrada e o spam.",
         user_id: newUser.id,
       }),
-      200,
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
     );
   } catch (e) {
     console.error("Erro geral invite_user:", e);
-    return corsResponse(
-      JSON.stringify({ error: `${e}` }),
-      500,
+    return new Response(
+      JSON.stringify({
+        error: `${e}`,
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
     );
   }
 });
+

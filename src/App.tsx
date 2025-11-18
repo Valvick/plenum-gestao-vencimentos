@@ -419,24 +419,19 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
 
     try {
       if (isLogin) {
-        // =====================
-        // LOGIN
-        // =====================
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      emailRedirectTo: `${window.location.origin}/`
+    }
+  });
 
-        if (error) throw error;
-        if (!data.session) {
-          throw new Error("Sessão não retornada no login.");
-        }
+  if (error) throw error;
 
-        // Aqui garantimos empresa + usuario
-        await ensureEmpresaAndUsuario(data.session);
-
-        onAuth(data.session);
-      } else {
+  setInfo("Enviamos um link de acesso para o seu e-mail. Clique nele para entrar.");
+  return;
+}
+ else {
         // =====================
         // CADASTRO (SIGN UP)
         // =====================
