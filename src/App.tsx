@@ -1,21 +1,37 @@
+import LandingPage from "./LandingPage";
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 import type { Session } from "@supabase/supabase-js";
+import type { Assinatura } from "./lib/assinaturas";
+import { getAssinaturaAtiva } from "./lib/assinaturas";
+
 
 // =========================
 // Supabase Client (Auth)
 // =========================
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+// 🟦 URL REAL do seu Supabase
+const supabaseUrl = "https://tjkdvkgroedamemwkyhi.supabase.co";
+
+// 🟩 ANON KEY → coloque aqui a sua VITE_SUPABASE_ANON_KEY real
+// ❗ NÃO USE a service_role no front-end
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn(
-    "⚠️ Configure VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no arquivo .env.local"
+    "⚠️ Configure VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no .env.local"
   );
 }
 
+// 🔐 Cria o cliente seguro para o front-end
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// 🔗 URL do checkout da Kiwify (substitua pelo seu link real)
+const KIWIFY_CHECKOUT_URL = "https://app.segvenc.app/checkout";
+
+// Tipo para estado
+type AssinaturaState = Assinatura | null | "loading";
+
 
 // =========================
 /** Tipos de domínio */
@@ -351,14 +367,14 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
     const meta = (session.user.user_metadata || {}) as any;
 
     const nomeEmpresa =
-      meta.company_name ||
-      `Empresa de ${session.user.email ?? "usuário"}`;
+      meta.company_name || `Empresa de ${session.user.email ?? "usuário"}`;
 
     const cnpjEmpresa = meta.company_cnpj || null;
     const emailNotif =
       meta.company_email_notificacao || session.user.email || null;
 
-    let empresaId: string | null = (usuario?.empresa_id as string | null) ?? null;
+    let empresaId: string | null =
+      (usuario?.empresa_id as string | null) ?? null;
 
     // 2) Se ainda não tem empresa_id, criamos a empresa
     if (!empresaId) {
@@ -419,47 +435,52 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
 
     try {
       if (isLogin) {
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: {
-      emailRedirectTo: `${window.location.origin}/`
-    }
-  });
+        // =====================
+        // LOGIN CLÁSSICO (E-MAIL + SENHA)
+        // =====================
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
-  if (error) throw error;
+        if (error) throw error;
 
-  setInfo("Enviamos um link de acesso para o seu e-mail. Clique nele para entrar.");
-  return;
-}
- else {
+        // Se quiser, pode já chamar o callback com a sessão:
+        if (data.session) {
+          // Se você quiser garantir empresa/usuario logo após login,
+          // pode chamar aqui também:
+          await ensureEmpresaAndUsuario(data.session);
+          onAuth(data.session);
+        }
+
+        // Opcional: mensagenzinha rápida
+        // setInfo("Login realizado com sucesso. Carregando seu painel...");
+        return;
+      } else {
         // =====================
         // CADASTRO (SIGN UP)
         // =====================
         if (!companyName.trim()) {
           throw new Error("Informe o nome da empresa para continuar.");
         }
+const { data, error } = await supabase.auth.signUp({
+  email,
+  password,
+  options: {
+    data: {
+      company_name: companyName,
+      company_cnpj: companyCnpj,
+      company_email_notificacao: companyEmail,
+    },
+  },
+});
 
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo: `${window.location.origin}/`,
-            // Metadados que vamos usar depois, no primeiro login,
-            // para criar empresa + usuarios
-            data: {
-              company_name: companyName,
-              company_cnpj: companyCnpj,
-              company_email_notificacao: companyEmail,
-            },
-          },
-        });
 
         if (error) throw error;
 
-        setInfo(
-          "Cadastro realizado. Enviamos um e-mail de confirmação. Após confirmar, volte e faça login."
-        );
-        setIsLogin(true);
+        setInfo("Cadastro realizado com sucesso. Agora é só fazer login com seu e-mail e senha.");
+setIsLogin(true);
+
       }
     } catch (err: any) {
       console.error(err);
@@ -649,7 +670,6 @@ const AuthScreen: React.FC<{ onAuth: (session: Session | null) => void }> = ({
     </div>
   );
 };
-
 // ======================================================
 // SISTEMA DE PRIORIDADE / CORES
 // ======================================================
@@ -2603,6 +2623,8 @@ const EmpresaView: React.FC<EmpresaViewProps> = ({ empresaId }) => {
     loadEmpresa();
   }, [empresaId]);
 
+  
+
   const handleSave = async () => {
     if (!empresaId) {
       setErro("Empresa não definida. Faça login novamente.");
@@ -2805,6 +2827,10 @@ const App: React.FC = () => {
   const [loadingInitialData, setLoadingInitialData] =
     useState<boolean>(false);
 
+  const [assinatura, setAssinatura] = useState<Assinatura | null>(null);
+  const [loadingAssinatura, setLoadingAssinatura] =
+    useState<boolean>(true);
+
   const [currentTab, setCurrentTab] = useState<TabKey>("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -2819,18 +2845,190 @@ const App: React.FC = () => {
     custom: {} as Record<string, string>,
   });
 
-  const [usuariosInternos, setUsuariosInternos] = useState<UsuarioInterno[]>(
-    []
-  );
+  const [usuariosInternos, setUsuariosInternos] =
+    useState<UsuarioInterno[]>([]);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
-  // Estados do modal de convite de usuário
-const [showInviteModal, setShowInviteModal] = useState(false);
-const [inviteEmail, setInviteEmail] = useState("");
-const [inviteLoading, setInviteLoading] = useState(false);
-const [inviteError, setInviteError] = useState<string | null>(null);
-const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
 
+  // Estados do modal de convite de usuário
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
+
+  // =============================
+  // 1) OUVINTE DE AUTENTICAÇÃO
+  // =============================
+  useEffect(() => {
+    // Recupera sessão atual
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session ?? null);
+    });
+
+    // Escuta mudanças de login/logout
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  // =============================
+// 2) CARREGAR DADOS INICIAIS (empresaId + colaboradores + registros + filtros)
+// =============================
+useEffect(() => {
+  const loadAllData = async () => {
+    if (!session?.user) return;
+
+    setLoadingInitialData(true);
+
+    try {
+      // ================================
+      // BUSCAR usuario -> pegar empresaId
+      // ================================
+      let usuarioRow:
+        | { id: number; empresa_id: string; is_admin: boolean | null }
+        | null = null;
+
+      // 1) tenta pelo auth_user_id (caminho normal)
+      const { data: byAuth, error: errorByAuth } = await supabase
+        .from("usuarios")
+        .select("id, empresa_id, is_admin")
+        .eq("auth_user_id", session.user.id)
+        .maybeSingle();
+
+      if (errorByAuth) {
+        console.error("Erro ao buscar usuario por auth_user_id:", errorByAuth);
+      }
+
+      if (byAuth) {
+        usuarioRow = byAuth;
+      } else {
+        // 2) se não achar, tenta casar pelo e-mail (caso criado pelo webhook)
+        const email = session.user.email ?? "";
+
+        if (email) {
+          const { data: byEmail, error: errorByEmail } = await supabase
+            .from("usuarios")
+            .select("id, empresa_id, is_admin")
+            .eq("email", email.toLowerCase())
+            .maybeSingle();
+
+          if (errorByEmail) {
+            console.error("Erro ao buscar usuario por email:", errorByEmail);
+          }
+
+          if (byEmail) {
+            usuarioRow = byEmail;
+
+            // vincula definitivamente esse registro ao auth_user_id
+            await supabase
+              .from("usuarios")
+              .update({ auth_user_id: session.user.id })
+              .eq("id", byEmail.id);
+          }
+        }
+      }
+
+      if (!usuarioRow?.empresa_id) {
+        setEmpresaId(null);
+        return;
+      }
+
+      const empresaIdLocal = usuarioRow.empresa_id;
+      setEmpresaId(empresaIdLocal);
+      setIsAdmin(usuarioRow.is_admin === true);
+
+      // ================================
+      // Carregar colaboradores
+      // ================================
+      const { data: colaboradoresData } = await supabase
+        .from("colaboradores")
+        .select("*")
+        .eq("empresa_id", empresaIdLocal);
+
+      setColaboradores(colaboradoresData ?? []);
+
+      // ================================
+      // Carregar exames
+      // ================================
+      const { data: examesData } = await supabase
+        .from("exames_cursos")
+        .select("*")
+        .eq("empresa_id", empresaIdLocal);
+
+      setExames(examesData ?? []);
+
+      // ================================
+      // Carregar registros  (agora direto da tabela registros)
+      // ================================
+      const { data: registrosData } = await supabase
+        .from("registros")
+        .select("*")
+        .eq("empresa_id", empresaIdLocal);
+
+      setRegistros(registrosData ?? []);
+
+      // ================================
+      // Carregar filtros personalizados
+      // ================================
+      const { data: customFiltersData } = await supabase
+        .from("custom_filters")
+        .select("*")
+        .eq("empresa_id", empresaIdLocal);
+
+      setCustomFilters(customFiltersData ?? []);
+
+      // ================================
+      // Carregar usuários internos
+      // ================================
+      const { data: usuariosInternosData } = await supabase
+        .from("usuarios")
+        .select("*")
+        .eq("empresa_id", empresaIdLocal);
+
+      setUsuariosInternos(usuariosInternosData ?? []);
+    } catch (err) {
+      console.error("Erro inesperado ao carregar tudo:", err);
+    } finally {
+      setLoadingInitialData(false);
+    }
+  };
+
+  loadAllData();
+}, [session]);
+
+  // =============================
+  // 3) CARREGAR ASSINATURA ATIVA DA EMPRESA
+  // =============================
+  useEffect(() => {
+    const carregarAssinatura = async () => {
+      if (!empresaId) {
+        setAssinatura(null);
+        setLoadingAssinatura(false);
+        return;
+      }
+
+      setLoadingAssinatura(true);
+
+      try {
+        const assinaturaAtiva = await getAssinaturaAtiva(supabase, empresaId);
+        setAssinatura(assinaturaAtiva);
+      } catch (err) {
+        console.error("Erro ao carregar assinatura:", err);
+        setAssinatura(null);
+      } finally {
+        setLoadingAssinatura(false);
+      }
+    };
+
+    carregarAssinatura();
+  }, [empresaId]);
 
   // =========================
   // Salvar dados no Supabase
@@ -2909,7 +3107,7 @@ const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
       qtde_dias:
         typeof r.qtdeDias === "number" ? r.qtdeDias : null,
       status: r.status ?? null,
-      link_certificado: r.linkCertificado || null, // novo campo
+      link_certificado: r.linkCertificado || null,
     }));
 
     const { error } = await supabase
@@ -2921,7 +3119,6 @@ const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
       throw new Error("Erro ao salvar registros.");
     }
   };
-
 
   const salvarCamposFiltros = async () => {
     if (!empresaId) {
@@ -2947,10 +3144,6 @@ const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
       throw new Error("Erro ao salvar campos/filtros.");
     }
   };
-
-// =========================
-// Convite de usuário (Edge Function invite_user)
-// =========================
 
   const salvarTudo = async () => {
     if (!empresaId) {
@@ -2985,192 +3178,6 @@ const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
     setMenuOpen(false);
   };
 
-  // =====================
-  // Auth listener
-  // =====================
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session ?? null);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  // =====================
-// Carregar dados do Supabase
-// =====================
-
-useEffect(() => {
-  const loadAllData = async () => {
-    if (!session) return;
-
-    setLoadingInitialData(true);
-
-    try {
-      // 1) Tentar buscar vínculo do usuário com empresa
-      const { data: usuario, error: userError } = await supabase
-        .from("usuarios")
-        .select("id, empresa_id, role")
-        .eq("auth_user_id", session.user.id)
-        .maybeSingle();
-
-      let empId: string | null = null;
-      let role: "admin" | "user" = "user";
-
-      if (userError) {
-        console.error("Erro ao buscar usuario/empresa:", userError);
-      }
-
-      // 1A) Se não existe usuario OU não tem empresa_id -> cria tudo agora
-      if (!usuario || !usuario.empresa_id) {
-        const nomeEmpresaPadrao =
-          "Empresa de " + (session.user.email ?? "usuário");
-
-        // Cria empresa
-        const { data: novaEmpresa, error: empresaError } = await supabase
-          .from("empresas")
-          .insert({ nome: nomeEmpresaPadrao })
-          .select("id")
-          .single();
-
-        if (empresaError || !novaEmpresa) {
-          console.error("Erro ao criar empresa padrão:", empresaError);
-          setLoadingInitialData(false);
-          return;
-        }
-
-        empId = String(novaEmpresa.id);
-        role = "admin";
-
-        if (usuario) {
-          // Já existia linha em usuarios, só atualiza empresa_id
-          const { error: updateUserError } = await supabase
-            .from("usuarios")
-            .update({ empresa_id: empId })
-            .eq("id", usuario.id);
-
-          if (updateUserError) {
-            console.error(
-              "Erro ao atualizar empresa_id do usuario existente:",
-              updateUserError
-            );
-          }
-        } else {
-          // Não tinha linha em usuarios -> cria agora
-          const { error: insertUserError } = await supabase
-            .from("usuarios")
-            .insert({
-              auth_user_id: session.user.id,
-              empresa_id: empId,
-              nome: session.user.email,
-              role: "admin",
-            });
-
-          if (insertUserError) {
-            console.error(
-              "Erro ao criar registro em usuarios:",
-              insertUserError
-            );
-          }
-        }
-      } else {
-        // 1B) Já existe tudo certinho
-        empId = String(usuario.empresa_id);
-        role = usuario.role;
-      }
-
-      if (!empId) {
-        console.error("Não foi possível determinar empresa_id para o usuário.");
-        setLoadingInitialData(false);
-        return;
-      }
-
-      // Define no estado do app
-      setEmpresaId(empId);
-      setIsAdmin(role === "admin");
-
-      // 2) colaboradores
-      const { data: colabs, error: colabError } = await supabase
-        .from("colaboradores")
-        .select("*")
-        .eq("empresa_id", empId)
-        .order("nome", { ascending: true });
-
-      if (colabError) {
-        console.error("Erro ao carregar colaboradores:", colabError);
-      } else if (colabs) {
-        setColaboradores(colabs.map(mapColaboradorFromDb));
-      }
-
-      // 3) exames/cursos
-      const { data: exams, error: examError } = await supabase
-        .from("exames_cursos")
-        .select("*")
-        .eq("empresa_id", empId)
-        .order("nome", { ascending: true });
-
-      if (examError) {
-        console.error("Erro ao carregar exames/cursos:", examError);
-      } else if (exams) {
-        setExames(exams.map(mapExameFromDb));
-      }
-
-      // 4) registros
-      const { data: regs, error: regsError } = await supabase
-        .from("registros")
-        .select("*")
-        .eq("empresa_id", empId);
-
-      if (regsError) {
-        console.error("Erro ao carregar registros:", regsError);
-      } else if (regs) {
-        setRegistros(regs.map(mapRegistroFromDb));
-      }
-
-      // 5) custom_filters
-      const { data: filters, error: filtError } = await supabase
-        .from("custom_filters")
-        .select("*")
-        .eq("empresa_id", empId);
-
-      if (filtError) {
-        console.error("Erro ao carregar custom_filters:", filtError);
-      } else if (filters) {
-        setCustomFilters(filters.map(mapCustomFilterFromDb));
-      }
-
-      // 6) usuarios da empresa
-      const { data: usersData, error: usersError } = await supabase
-        .from("usuarios")
-        .select("id, auth_user_id, empresa_id, nome, role")
-        .eq("empresa_id", empId);
-
-      if (usersError) {
-        console.error("Erro ao carregar usuarios:", usersError);
-      } else if (usersData) {
-        setUsuariosInternos(usersData.map(mapUsuarioFromDb));
-      }
-    } catch (err) {
-      console.error("Erro inesperado ao carregar dados:", err);
-    } finally {
-      setLoadingInitialData(false);
-    }
-  };
-
-  loadAllData();
-}, [session]);
-
-
-
   const handleChangeUserRole = async (
     id: number,
     newRole: "admin" | "user"
@@ -3198,8 +3205,6 @@ useEffect(() => {
     }
   };
 
-  // ⬇️ COLE AQUI A FUNÇÃO NOVA
-
   const handleInviteUser = async () => {
     if (!empresaId) {
       setInviteError("Empresa não definida. Faça login novamente.");
@@ -3216,7 +3221,6 @@ useEffect(() => {
     setInviteLoading(true);
 
     try {
-      // chama a Edge Function invite_user pelo client do Supabase
       const { data, error } = await supabase.functions.invoke("invite_user", {
         body: {
           empresa_id: empresaId,
@@ -3249,20 +3253,68 @@ useEffect(() => {
     }
   };
 
+  // =============================
+  // GUARDAS DE RENDERIZAÇÃO
+  // =============================
   if (!session) {
     return <AuthScreen onAuth={setSession} />;
   }
 
-  if (loadingInitialData) {
+  if (loadingInitialData || loadingAssinatura) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-100">
         <div className="bg-white rounded-3xl shadow px-6 py-4 text-sm text-slate-600">
-          Carregando dados da sua empresa...
+          Carregando dados da sua conta...
         </div>
       </div>
     );
   }
 
+  if (!empresaId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+        <div className="bg-white rounded-3xl shadow px-6 py-4 text-sm text-slate-600 text-center">
+          <p className="font-semibold mb-1">Não encontramos sua empresa.</p>
+          <p className="text-xs text-slate-500">
+            Entre em contato com o suporte para concluir seu cadastro no
+            SegVenc.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // 🚫 Sem assinatura ativa: bloqueia
+  if (!assinatura) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-50 px-4">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-lg">
+          <h1 className="text-2xl font-bold">Assinatura necessária</h1>
+          <p className="text-slate-300">
+            Não encontramos uma assinatura ativa para a sua empresa.
+          </p>
+          <p className="text-slate-300">
+            Para continuar usando o SegVenc e manter o controle dos vencimentos
+            de exames, cursos e ASO, ative sua assinatura abaixo.
+          </p>
+          <button
+            onClick={() => window.open(KIWIFY_CHECKOUT_URL, "_blank")}
+            className="w-full mt-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-slate-950 font-semibold py-2.5 transition"
+          >
+            Ativar assinatura na Kiwify
+          </button>
+          <p className="text-xs text-slate-500 mt-2">
+            Já pagou e ainda está vendo essa tela? Aguarde alguns minutos para o
+            processamento do pagamento ou entre em contato com o suporte.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // =============================
+  // RENDERIZAÇÃO PRINCIPAL
+  // =============================
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col">
       {/* HEADER */}
@@ -3347,7 +3399,7 @@ useEffect(() => {
               ["exames", "Exames/Cursos"],
               ["campos", "Campos & Filtros"],
               ["usuarios", "Usuários"],
-              ["empresa", "Empresa"], // 👈 nova aba
+              ["empresa", "Empresa"],
             ] as [TabKey, string][]
           ).map(([key, label]) => (
             <button
@@ -3366,7 +3418,7 @@ useEffect(() => {
           ))}
         </div>
 
-        {/* Botão salvar dados (colaboradores/registros/exames/campos) */}
+        {/* Botão salvar dados */}
         <div className="flex justify-end mb-3">
           <button
             type="button"
@@ -3418,7 +3470,7 @@ useEffect(() => {
           />
         )}
 
-               {currentTab === "usuarios" && (
+        {currentTab === "usuarios" && (
           <UsuariosView
             usuarios={usuariosInternos}
             currentUserId={session.user.id}
@@ -3433,9 +3485,9 @@ useEffect(() => {
           />
         )}
 
-
         {currentTab === "empresa" && <EmpresaView empresaId={empresaId} />}
-      {/* Modal de convite de usuário */}
+
+        {/* Modal de convite de usuário */}
         {showInviteModal && (
           <div className="fixed inset-0 flex items-center justify-center bg-black/40 z-50">
             <div className="bg-white rounded-3xl shadow-xl px-6 py-5 max-w-sm w-full text-xs">
@@ -3455,7 +3507,9 @@ useEffect(() => {
               />
 
               {inviteError && (
-                <div className="text-rose-600 text-xs mb-2">{inviteError}</div>
+                <div className="text-rose-600 text-xs mb-2">
+                  {inviteError}
+                </div>
               )}
               {inviteSuccess && (
                 <div className="text-emerald-600 text-xs mb-2">
