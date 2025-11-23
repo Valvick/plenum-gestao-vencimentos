@@ -83,7 +83,7 @@ const LandingPage: React.FC = () => {
             <div className="space-y-4">
               <span className="inline-flex items-center gap-2 rounded-full border border-sky-500/50 bg-sky-500/10 px-3 py-1 text-[11px] font-medium text-sky-200">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                SaaS para empresas de energia e serviços elétricos
+                Sistema para empresas de energia e serviços elétricos
               </span>
 
               <h1 className="text-3xl md:text-4xl lg:text-5xl font-extrabold tracking-tight text-white">

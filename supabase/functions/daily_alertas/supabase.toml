@@ -1,0 +1,2 @@
+[functions.daily_alertas]
+verify_jwt = false
