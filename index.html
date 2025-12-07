@@ -3,13 +3,17 @@
   <head>
     <meta charset="UTF-8" />
 
-    <!-- Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=AW-17784615699"></script>
+    <!-- Google tag (gtag.js) – GA4 + Google Ads -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-D3E0ZD6FH7"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
+      function gtag(){ dataLayer.push(arguments); }
       gtag('js', new Date());
 
+      // GA4
+      gtag('config', 'G-D3E0ZD6FH7');
+
+      // Google Ads (mesma tag gtag, só outro ID)
       gtag('config', 'AW-17784615699');
     </script>
     <!-- FIM GOOGLE TAG -->
